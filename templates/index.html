@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chinese ASR</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: system-ui, sans-serif;
+  background: #0d0d0d;
+  color: #e0e0e0;
+  min-height: 100vh;
+  padding: 24px 16px;
+}
+.container { max-width: 700px; margin: 0 auto; }
+h1 { font-size: 1.5rem; color: #fff; margin-bottom: 4px; }
+.sub { font-size: 0.85rem; color: #666; margin-bottom: 24px; }
+
+.card {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 16px;
+}
+.card h2 { font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+
+label { font-size: 0.85rem; color: #aaa; display: block; margin-bottom: 6px; }
+input[type="text"], input[type="password"] {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #111;
+  color: #fff;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+  outline: none;
+}
+input:focus { border-color: #555; }
+
+button#submitBtn {
+  width: 100%;
+  padding: 12px;
+  background: #e63946;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+button#submitBtn:hover { background: #c1121f; }
+button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+/* Log box */
+.log-box {
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 14px;
+  font-family: monospace;
+  font-size: 0.82rem;
+  min-height: 80px;
+  max-height: 200px;
+  overflow-y: auto;
+  display: none;
+}
+.log-line { padding: 2px 0; color: #aaa; }
+.log-line.success { color: #4caf50; }
+.log-line.error { color: #e63946; }
+
+/* Result */
+.result-card { display: none; }
+.full-text {
+  font-size: 1.1rem;
+  line-height: 1.8;
+  color: #fff;
+  word-break: break-all;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: #111;
+  border-radius: 8px;
+}
+.segments { margin-top: 12px; }
+.seg {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #222;
+  font-size: 0.9rem;
+}
+.seg:last-child { border-bottom: none; }
+.seg .ts {
+  color: #e63946;
+  font-family: monospace;
+  font-size: 0.8rem;
+  min-width: 90px;
+  padding-top: 2px;
+}
+.seg .txt { color: #ddd; line-height: 1.6; }
+
+.btn-row { display: flex; gap: 8px; margin-top: 12px; }
+.btn-sm {
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #222;
+  color: #ccc;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.btn-sm:hover { background: #2a2a2a; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎬 Chinese ASR</h1>
+  <p class="sub">Kuaishou ভিডিও → Chinese text with timestamps</p>
+
+  <!-- Settings -->
+  <div class="card">
+    <h2>⚙ Settings</h2>
+    <label>Groq API Key</label>
+    <input type="password" id="groqKey" placeholder="gsk_..." />
+    <button onclick="saveSettings()" class="btn-sm" style="width:auto">💾 Save</button>
+    <span id="saveMsg" style="font-size:0.8rem;color:#4caf50;margin-left:8px"></span>
+  </div>
+
+  <!-- Input -->
+  <div class="card">
+    <h2>🔗 Video URL</h2>
+    <input type="text" id="urlInput" placeholder="https://v.kuaishou.com/..." />
+    <button id="submitBtn" onclick="startTranscribe()">Extract Chinese Text</button>
+  </div>
+
+  <!-- Logs -->
+  <div class="card" id="logCard" style="display:none">
+    <h2>📋 Live Log</h2>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+  <!-- Result -->
+  <div class="card result-card" id="resultCard">
+    <h2>✅ Result</h2>
+    <div class="full-text" id="fullText"></div>
+    <div class="btn-row">
+      <button class="btn-sm" onclick="copyFull()">📋 Copy All</button>
+      <button class="btn-sm" onclick="copySRT()">📄 Copy as SRT</button>
+    </div>
+    <div class="segments" id="segments"></div>
+  </div>
+</div>
+
+<script>
+// Load saved settings
+window.onload = () => {
+  document.getElementById('groqKey').value = localStorage.getItem('groq_key') || '';
+};
+
+function saveSettings() {
+  localStorage.setItem('groq_key', document.getElementById('groqKey').value.trim());
+  const msg = document.getElementById('saveMsg');
+  msg.textContent = '✅ Saved!';
+  setTimeout(() => msg.textContent = '', 2000);
+}
+
+function addLog(msg, type='') {
+  const box = document.getElementById('logBox');
+  const line = document.createElement('div');
+  line.className = 'log-line ' + type;
+  const ts = new Date().toLocaleTimeString();
+  line.textContent = `[${ts}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = (sec % 60).toFixed(1).padStart(4, '0');
+  return `${String(m).padStart(2,'0')}:${s}`;
+}
+
+let lastSegments = [];
+
+function startTranscribe() {
+  const url     = document.getElementById('urlInput').value.trim();
+  const groqKey = document.getElementById('groqKey').value.trim();
+
+  if (!url)     return alert('URL দাও');
+  if (!groqKey) return alert('Groq API Key দাও');
+
+  localStorage.setItem('groq_key', groqKey);
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Processing...';
+
+  // Show log
+  document.getElementById('logCard').style.display = 'block';
+  document.getElementById('logBox').style.display  = 'block';
+  document.getElementById('logBox').innerHTML = '';
+  document.getElementById('resultCard').style.display = 'none';
+
+  const params = new URLSearchParams({ url, groq_key: groqKey });
+  const es = new EventSource(`/transcribe?${params}`);
+
+  es.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    const isSuccess = d.msg.startsWith('✅');
+    addLog(d.msg, isSuccess ? 'success' : '');
+  });
+
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    es.close();
+    btn.disabled = false;
+    btn.textContent = 'Extract Chinese Text';
+    addLog(`🎉 Done! Duration: ${d.duration.toFixed(1)}s`, 'success');
+
+    // Show result
+    document.getElementById('fullText').textContent = d.text;
+    document.getElementById('resultCard').style.display = 'block';
+
+    lastSegments = d.segments;
+    const segBox = document.getElementById('segments');
+    segBox.innerHTML = '';
+    for (const seg of d.segments) {
+      const div = document.createElement('div');
+      div.className = 'seg';
+      div.innerHTML = `
+        <span class="ts">${fmtTime(seg.start)} → ${fmtTime(seg.end)}</span>
+        <span class="txt">${seg.text}</span>
+      `;
+      segBox.appendChild(div);
+    }
+  });
+
+  es.addEventListener('error', e => {
+    try {
+      const d = JSON.parse(e.data);
+      addLog('❌ Error: ' + d.msg, 'error');
+    } catch {
+      addLog('❌ Connection error', 'error');
+    }
+    es.close();
+    btn.disabled = false;
+    btn.textContent = 'Extract Chinese Text';
+  });
+}
+
+function copyFull() {
+  navigator.clipboard.writeText(document.getElementById('fullText').textContent);
+  alert('Copied!');
+}
+
+function copySRT() {
+  let srt = '';
+  lastSegments.forEach((seg, i) => {
+    const fmt = s => {
+      const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sc = (s%60).toFixed(3);
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(Math.floor(sc)).padStart(2,'0')},${String(Math.round((sc%1)*1000)).padStart(3,'0')}`;
+    };
+    srt += `${i+1}\n${fmt(seg.start)} --> ${fmt(seg.end)}\n${seg.text}\n\n`;
+  });
+  navigator.clipboard.writeText(srt);
+  alert('SRT Copied!');
+}
+
+document.getElementById('urlInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') startTranscribe();
+});
+</script>
+</body>
+</html>
