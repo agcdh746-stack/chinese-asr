@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chinese ASR</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: system-ui, sans-serif;
+  background: #0d0d0d;
+  color: #e0e0e0;
+  min-height: 100vh;
+  padding: 24px 16px;
+}
+.container { max-width: 760px; margin: 0 auto; }
+h1 { font-size: 1.6rem; color: #fff; margin-bottom: 4px; }
+.sub { font-size: 0.9rem; color: #7b7b7b; margin-bottom: 24px; }
+.card {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card h2 {
+  font-size: 0.82rem;
+  color: #8f8f8f;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+label {
+  font-size: 0.85rem;
+  color: #a9a9a9;
+  display: block;
+  margin-bottom: 6px;
+}
+input[type="text"],
+input[type="password"],
+textarea,
+select {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #111;
+  color: #fff;
+  font-size: 0.92rem;
+  margin-bottom: 12px;
+  outline: none;
+}
+textarea { resize: vertical; min-height: 88px; }
+input:focus, textarea:focus, select:focus { border-color: #555; }
+.row { display: grid; grid-template-columns: 1fr 180px; gap: 12px; }
+button#submitBtn {
+  width: 100%;
+  padding: 12px;
+  background: #e63946;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+button#submitBtn:hover { background: #c1121f; }
+button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; }
+.btn-sm {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #222;
+  color: #ccc;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.btn-sm:hover { background: #2a2a2a; }
+.hint {
+  font-size: 0.8rem;
+  color: #7f7f7f;
+  margin-top: -4px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.log-box {
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 14px;
+  font-family: monospace;
+  font-size: 0.82rem;
+  min-height: 90px;
+  max-height: 220px;
+  overflow-y: auto;
+  display: none;
+}
+.log-line { padding: 2px 0; color: #aaa; }
+.log-line.success { color: #4caf50; }
+.log-line.error { color: #ff6b6b; }
+.result-card { display: none; }
+.meta {
+  font-size: 0.84rem;
+  color: #999;
+  margin-bottom: 12px;
+}
+.full-text {
+  font-size: 1.03rem;
+  line-height: 1.8;
+  color: #fff;
+  word-break: break-word;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: #111;
+  border-radius: 8px;
+  white-space: pre-wrap;
+}
+.segments { margin-top: 12px; }
+.seg {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #222;
+  font-size: 0.9rem;
+}
+.seg:last-child { border-bottom: none; }
+.seg .ts {
+  color: #e63946;
+  font-family: monospace;
+  font-size: 0.8rem;
+  min-width: 120px;
+  padding-top: 2px;
+}
+.seg .txt { color: #ddd; line-height: 1.6; }
+.btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .row { grid-template-columns: 1fr; }
+  .seg { flex-direction: column; gap: 4px; }
+  .seg .ts { min-width: auto; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎬 Chinese ASR</h1>
+  <p class="sub">Kuaishou video → transcript with segment timestamps</p>
+
+  <div class="card">
+    <h2>⚙ Settings</h2>
+    <label>Groq API Keys</label>
+    <textarea id="groqKeys" placeholder="gsk_xxx&#10;gsk_yyy&#10;gsk_zzz"></textarea>
+    <div class="hint">একটা বা একাধিক key দিতে পারো। newline বা comma দিয়ে আলাদা করো। quota/rate limit হলে next key try করবে.</div>
+
+    <div class="row">
+      <div>
+        <label>Language</label>
+        <select id="language">
+          <option value="zh">Chinese (zh)</option>
+          <option value="en">English (en)</option>
+          <option value="bn">Bangla (bn)</option>
+          <option value="auto">Auto detect</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button onclick="saveSettings()" class="btn-sm" style="width:100%">💾 Save</button>
+      </div>
+    </div>
+    <div id="saveMsg" style="font-size:0.82rem;color:#4caf50"></div>
+  </div>
+
+  <div class="card">
+    <h2>🔗 Video URL</h2>
+    <input type="text" id="urlInput" placeholder="https://v.kuaishou.com/... or https://www.kuaishou.com/short-video/..." />
+    <button id="submitBtn" onclick="startTranscribe()">Extract Transcript</button>
+  </div>
+
+  <div class="card" id="logCard" style="display:none">
+    <h2>📋 Live Log</h2>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+  <div class="card result-card" id="resultCard">
+    <h2>✅ Result</h2>
+    <div class="meta" id="metaInfo"></div>
+    <div class="full-text" id="fullText"></div>
+    <div class="btn-row">
+      <button class="btn-sm" onclick="copyFull()">📋 Copy All</button>
+      <button class="btn-sm" onclick="copySRT()">📄 Copy as SRT</button>
+    </div>
+    <div class="segments" id="segments"></div>
+  </div>
+</div>
+
+<script>
+window.onload = () => {
+  document.getElementById('groqKeys').value = localStorage.getItem('groq_keys') || '';
+  document.getElementById('language').value = localStorage.getItem('language') || 'zh';
+};
+
+function saveSettings() {
+  localStorage.setItem('groq_keys', document.getElementById('groqKeys').value.trim());
+  localStorage.setItem('language', document.getElementById('language').value);
+  const msg = document.getElementById('saveMsg');
+  msg.textContent = '✅ Saved!';
+  setTimeout(() => msg.textContent = '', 2000);
+}
+
+function addLog(msg, type='') {
+  const box = document.getElementById('logBox');
+  const line = document.createElement('div');
+  line.className = 'log-line ' + type;
+  const ts = new Date().toLocaleTimeString();
+  line.textContent = `[${ts}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function fmtTime(sec) {
+  const totalMs = Math.max(0, Math.round((Number(sec) || 0) * 1000));
+  const h = Math.floor(totalMs / 3600000);
+  const m = Math.floor((totalMs % 3600000) / 60000);
+  const s = Math.floor((totalMs % 60000) / 1000);
+  const ms = totalMs % 1000;
+  if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+}
+
+function srtTime(sec) {
+  const totalMs = Math.max(0, Math.round((Number(sec) || 0) * 1000));
+  const h = Math.floor(totalMs / 3600000);
+  const m = Math.floor((totalMs % 3600000) / 60000);
+  const s = Math.floor((totalMs % 60000) / 1000);
+  const ms = totalMs % 1000;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+}
+
+let lastSegments = [];
+let lastFullText = '';
+
+function startTranscribe() {
+  const url = document.getElementById('urlInput').value.trim();
+  const groqKeys = document.getElementById('groqKeys').value.trim();
+  const language = document.getElementById('language').value;
+
+  if (!url) return alert('URL দাও');
+  if (!groqKeys) return alert('Groq API key দাও');
+
+  localStorage.setItem('groq_keys', groqKeys);
+  localStorage.setItem('language', language);
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Processing...';
+
+  document.getElementById('logCard').style.display = 'block';
+  document.getElementById('logBox').style.display = 'block';
+  document.getElementById('logBox').innerHTML = '';
+  document.getElementById('resultCard').style.display = 'none';
+  document.getElementById('segments').innerHTML = '';
+  document.getElementById('metaInfo').textContent = '';
+  lastSegments = [];
+  lastFullText = '';
+
+  const params = new URLSearchParams({ url, groq_keys: groqKeys, language });
+  const es = new EventSource(`/transcribe?${params}`);
+
+  es.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    const isSuccess = d.msg.startsWith('✅');
+    addLog(d.msg, isSuccess ? 'success' : '');
+  });
+
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    es.close();
+    btn.disabled = false;
+    btn.textContent = 'Extract Transcript';
+    addLog(`🎉 Done! Duration: ${(d.duration || 0).toFixed(1)}s`, 'success');
+
+    lastFullText = d.text || '';
+    lastSegments = Array.isArray(d.segments) ? d.segments : [];
+
+    document.getElementById('fullText').textContent = lastFullText;
+    document.getElementById('metaInfo').textContent = `Strategy: ${d.strategy || '-'} | Language: ${d.language || '-'}`;
+    document.getElementById('resultCard').style.display = 'block';
+
+    const segBox = document.getElementById('segments');
+    segBox.innerHTML = '';
+    for (const seg of lastSegments) {
+      const div = document.createElement('div');
+      div.className = 'seg';
+      div.innerHTML = `
+        <span class="ts">${fmtTime(seg.start)} → ${fmtTime(seg.end)}</span>
+        <span class="txt"></span>
+      `;
+      div.querySelector('.txt').textContent = seg.text || '';
+      segBox.appendChild(div);
+    }
+  });
+
+  es.addEventListener('error', e => {
+    try {
+      const d = JSON.parse(e.data);
+      addLog('❌ Error: ' + d.msg, 'error');
+    } catch {
+      addLog('❌ Connection error', 'error');
+    }
+    es.close();
+    btn.disabled = false;
+    btn.textContent = 'Extract Transcript';
+  });
+}
+
+function copyFull() {
+  navigator.clipboard.writeText(lastFullText || '');
+  alert('Copied!');
+}
+
+function copySRT() {
+  let srt = '';
+  lastSegments.forEach((seg, idx) => {
+    srt += `${idx + 1}\n${srtTime(seg.start)} --> ${srtTime(seg.end)}\n${(seg.text || '').trim()}\n\n`;
+  });
+  navigator.clipboard.writeText(srt.trim());
+  alert('SRT copied!');
+}
+</script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
