@@ -215,10 +215,11 @@ async def groq_transcribe(mp3_path: str, groq_keys: list[str], language: str = "
 
     for idx, groq_key in enumerate(groq_keys, start=1):
         headers = {"Authorization": f"Bearer {groq_key}"}
+        # ✅ একসাথে segment ও word দুটোই চাও
         data = {
             "model": "whisper-large-v3",
             "response_format": "verbose_json",
-            "timestamp_granularities[]": "word",
+            "timestamp_granularities[]": ["segment", "word"],
         }
         if language and language != "auto":
             data["language"] = language
@@ -254,7 +255,6 @@ async def groq_transcribe(mp3_path: str, groq_keys: list[str], language: str = "
 
 
 def has_chinese(text: str) -> bool:
-    """কোনো চাইনিজ অক্ষর থাকলে True"""
     return any('\u4e00' <= c <= '\u9fff' for c in text)
 
 
@@ -312,7 +312,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
         result = asyncio.run(groq_transcribe(mp3_path, groq_keys, language))
         yield sse("log", {"msg": f"✅ Transcription done! ({result.get('duration', 0):.1f}s audio)"})
 
-        # ✅ ডিফল্ট সেগমেন্ট ব্যবহার করো (সব ভাষায় সঠিক)
+        # ✅ ডিফল্ট সেগমেন্ট ব্যবহার করো (pause‑ভিত্তিক, সব ভাষায় নির্ভুল)
         segments = []
         raw_segments = result.get("segments")
         if raw_segments:
@@ -323,7 +323,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                     "text": (seg.get("text") or "").strip(),
                 })
         else:
-            # word‑level fallback
+            # fallback (সাধারণত দরকার হয় না)
             words = result.get("words", [])
             current_words = []
             current_start = None
@@ -374,7 +374,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                 pass
 
 
-# ──────────────────────── edge‑tts CLI ব্যবহার করে ফ্রি TTS ────────────────────────
+# ──────────────────────── edge‑tts CLI (নির্ভরযোগ্য) ────────────────────────
 @app.route("/synthesize", methods=["POST"])
 def synthesize():
     data = request.get_json(force=True)
@@ -389,11 +389,9 @@ def synthesize():
     mp3_path = None
     wav_path = None
     try:
-        # টেম্প ফাইল তৈরি
         fd, mp3_path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
 
-        # edge‑tts CLI চালাও
         subprocess.run([
             "edge-tts",
             "--voice", voice,
@@ -403,7 +401,6 @@ def synthesize():
             "--write-media", mp3_path
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # mp3 → wav (24kHz, mono, s16le)
         fd, wav_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
         subprocess.run([
@@ -417,7 +414,7 @@ def synthesize():
 
         with open(wav_path, "rb") as f:
             wav_bytes = f.read()
-        pcm_bytes = wav_bytes[44:]   # WAV header বাদ
+        pcm_bytes = wav_bytes[44:]
         pcm_b64 = base64.b64encode(pcm_bytes).decode()
 
         return jsonify({"pcm_b64": pcm_b64, "sample_rate": 24000})
