@@ -165,6 +165,11 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
 .btn-dub:disabled { background: #333; color: #666; cursor: not-allowed; }
 #dubVideoWrap { display: none; margin-top: 16px; }
 #dubVideoWrap video { width: 100%; border-radius: 8px; background: #000; }
+.tab-btn {
+  padding: 8px 16px; border-radius: 6px; border: 1px solid #333;
+  background: #1a1a1a; color: #aaa; font-size: 0.85rem; cursor: pointer;
+}
+.tab-active { background: #2d6a4f; color: #fff; border-color: #2d6a4f; }
 .btn-dl {
   display: inline-block; margin-top: 10px; padding: 10px 20px;
   background: #1d3557; color: #fff; border-radius: 8px;
@@ -248,12 +253,45 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
   <div class="card" id="dubCard" style="display:none">
     <h2>🎙 Dubbing</h2>
 
-    <p style="font-size:0.84rem;color:#888;margin-bottom:10px">
-      প্রতিটা segment এর Bengali/English translation নিচে লিখুন বা paste করুন:
-    </p>
+    <!-- Tabs -->
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button id="tabAutoBtn" class="tab-btn tab-active" onclick="dubSwitchTab('auto')">🤖 Auto Translate</button>
+      <button id="tabManualBtn" class="tab-btn" onclick="dubSwitchTab('manual')">✍️ Manual SRT</button>
+    </div>
+
+    <!-- Auto Translate Tab -->
+    <div id="tabAuto">
+      <p style="font-size:0.84rem;color:#888;margin-bottom:10px">
+        Gemini দিয়ে Chinese → Bengali auto translate করবে এবং SRT তৈরি করবে।
+      </p>
+      <div class="row" style="margin-bottom:8px">
+        <div>
+          <label>Target Language</label>
+          <select id="dubTranslateLang">
+            <option value="Bengali">Bengali (বাংলা)</option>
+            <option value="English">English</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn-dub" onclick="dubAutoTranslate()" id="dubTranslateBtn" style="padding:10px;font-size:0.9rem">🌐 Translate</button>
+        </div>
+      </div>
+      <div id="dubTranslateStatus" style="font-size:0.82rem;color:#aaa;margin-bottom:8px"></div>
+    </div>
+
+    <!-- Manual SRT Tab -->
+    <div id="tabManual" style="display:none">
+      <p style="font-size:0.84rem;color:#888;margin-bottom:8px">
+        Bengali/English SRT paste করুন — timestamp সহ:
+      </p>
+      <textarea id="dubSrtInput" placeholder="1&#10;00:00:00,000 --> 00:00:00,960&#10;কে প্রথমে জঙ্গল থেকে বের হবে&#10;&#10;2&#10;00:00:00,960 --> 00:00:02,580&#10;ধনী, সেনা নাকি গরিব?" style="min-height:160px;font-size:0.82rem"></textarea>
+      <button class="btn-sm" onclick="dubParseSrt()" style="margin-bottom:12px">🔍 Parse SRT</button>
+    </div>
+
+    <div id="dubParseStatus" style="font-size:0.82rem;color:#4caf50;margin-bottom:8px"></div>
     <div id="dubSegments"></div>
 
-    <button class="btn-dub" id="dubBtn" onclick="startDubbing()">🎬 Generate Dubbed Video</button>
+    <button class="btn-dub" id="dubBtn" onclick="startDubbing()" style="display:none;margin-top:12px">🎬 Generate Dubbed Video</button>
     <div class="dub-progress" id="dubProgress"></div>
 
     <div id="dubVideoWrap">
@@ -432,20 +470,140 @@ function dubLoadKeys() {
 }
 
 function buildDubSegments(segs) {
+  document.getElementById('dubCard').style.display = 'block';
+  dubLoadKeys();
+}
+
+let dubParsedSegments = [];
+
+function dubSwitchTab(tab) {
+  document.getElementById('tabAuto').style.display   = tab === 'auto'   ? '' : 'none';
+  document.getElementById('tabManual').style.display = tab === 'manual' ? '' : 'none';
+  document.getElementById('tabAutoBtn').className   = 'tab-btn' + (tab === 'auto'   ? ' tab-active' : '');
+  document.getElementById('tabManualBtn').className = 'tab-btn' + (tab === 'manual' ? ' tab-active' : '');
+}
+
+async function dubAutoTranslate() {
+  const keysRaw = document.getElementById('dubGeminiKeys').value.trim();
+  const lang    = document.getElementById('dubTranslateLang').value;
+  const status  = document.getElementById('dubTranslateStatus');
+  const btn     = document.getElementById('dubTranslateBtn');
+
+  if (!keysRaw) { alert('Gemini API keys দিন'); return; }
+  if (!lastSegments.length) { alert('আগে transcript করুন'); return; }
+
+  const keys = keysRaw.split('\n').map(k => k.trim()).filter(Boolean);
+  btn.disabled = true;
+  dubParsedSegments = [];
+
+  const BATCH = 20; // segments per Gemini call
+  let keyIdx = 0;
+  let allTranslated = [];
+
+  for (let i = 0; i < lastSegments.length; i += BATCH) {
+    const batch = lastSegments.slice(i, i + BATCH);
+    status.textContent = `⏳ Translating ${i+1}–${Math.min(i+BATCH, lastSegments.length)} / ${lastSegments.length}...`;
+
+    const prompt = `Translate the following Chinese subtitles to ${lang}. 
+Return ONLY a JSON array of translated strings in the same order, nothing else.
+Example: ["translation1","translation2"]
+
+Subtitles:
+${batch.map((s,j) => `${j+1}. ${s.text}`).join('\n')}`;
+
+    let done = false; let attempts = 0;
+    while (!done && attempts < keys.length) {
+      const key = keys[keyIdx % keys.length]; keyIdx++; attempts++;
+      try {
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({contents: [{parts: [{text: prompt}]}]})
+          }
+        );
+        if (resp.status === 429) throw Object.assign(new Error('quota'), {code: 429});
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        text = text.replace(/```json|```/g, '').trim();
+        const translations = JSON.parse(text);
+        batch.forEach((seg, j) => {
+          allTranslated.push({ start: seg.start, end: seg.end, text: translations[j] || seg.text });
+        });
+        done = true;
+      } catch(e) {
+        if (e.code === 429) {
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          status.textContent = `❌ Error: ${e.message}`;
+          done = true;
+        }
+      }
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  dubParsedSegments = allTranslated;
+  status.textContent = `✅ ${dubParsedSegments.length}টা segment translate হয়েছে`;
+
+  // Show preview
+  showDubPreview();
+  btn.disabled = false;
+}
+
+function showDubPreview() {
   const box = document.getElementById('dubSegments');
   box.innerHTML = '';
-  segs.forEach((seg, i) => {
+  for (const seg of dubParsedSegments) {
+    const dur = (seg.end - seg.start).toFixed(1);
     const div = document.createElement('div');
     div.className = 'dub-seg';
-    const dur = (seg.end - seg.start).toFixed(1);
     div.innerHTML = `
-      <span class="ts">${fmtTime(seg.start)}<br>${fmtTime(seg.end)}<br><span style="color:#555;font-size:0.72rem">${dur}s</span></span>
+      <span class="ts">${fmtTime(seg.start)} → ${fmtTime(seg.end)}<br><span style="color:#555;font-size:0.72rem">${dur}s</span></span>
       <span class="orig"></span>
-      <textarea id="dub-txt-${i}" placeholder="Bengali/English translation..."></textarea>
     `;
-    div.querySelector('.orig').textContent = seg.text || '';
+    div.querySelector('.orig').textContent = seg.text;
     box.appendChild(div);
-  });
+  }
+  document.getElementById('dubBtn').style.display = 'block';
+}
+
+function srtTimeToSec(t) {
+  const clean = t.replace(',', '.');
+  const parts = clean.split(':');
+  return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+}
+
+function dubParseSrt() {
+  const raw = document.getElementById('dubSrtInput').value.trim();
+  const status = document.getElementById('dubParseStatus');
+
+  if (!raw) { status.textContent = '❌ SRT খালি'; return; }
+
+  const blocks = raw.split(/\n\s*\n/);
+  dubParsedSegments = [];
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n');
+    if (lines.length < 3) continue;
+    const tsLine = lines.find(l => l.includes('-->'));
+    if (!tsLine) continue;
+    const [startStr, endStr] = tsLine.split('-->').map(s => s.trim());
+    const start = srtTimeToSec(startStr);
+    const end   = srtTimeToSec(endStr);
+    const text  = lines.slice(lines.indexOf(tsLine) + 1).join(' ').trim();
+    if (text) dubParsedSegments.push({ start, end, text });
+  }
+
+  if (!dubParsedSegments.length) {
+    status.textContent = '❌ কোনো segment parse হয়নি';
+    return;
+  }
+
+  status.textContent = `✅ ${dubParsedSegments.length}টা segment parse হয়েছে`;
+  showDubPreview();
 }
 
 async function dubCallGemini(text, voice, apiKey) {
@@ -484,14 +642,10 @@ async function startDubbing() {
 
   if (!keysRaw) { alert('Gemini API keys দিন'); return; }
   if (!videoUrl) { alert('Video URL নেই'); return; }
-  if (!lastSegments.length) { alert('আগে transcript করুন'); return; }
+  if (!dubParsedSegments.length) { alert('আগে SRT parse করুন'); return; }
 
   const keys = keysRaw.split('\n').map(k => k.trim()).filter(Boolean);
-  const segments = lastSegments.map((seg, i) => ({
-    start: seg.start,
-    end: seg.end,
-    text: (document.getElementById(`dub-txt-${i}`)?.value || '').trim()
-  })).filter(s => s.text);
+  const segments = dubParsedSegments.filter(s => s.text);
 
   if (!segments.length) { alert('কমপক্ষে একটা translation দিন'); return; }
 
