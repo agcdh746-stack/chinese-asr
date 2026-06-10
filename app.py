@@ -11,7 +11,7 @@ import base64
 from pathlib import Path
 
 import httpx
-import edge_tts  # ফ্রি TTS (কোনো API key লাগে না)
+import edge_tts
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_from_directory
 
 app = Flask(__name__)
@@ -254,6 +254,11 @@ async def groq_transcribe(mp3_path: str, groq_keys: list[str], language: str = "
     raise ValueError(str(last_error or "All Groq keys failed"))
 
 
+def has_chinese(text: str) -> bool:
+    """কোনো চাইনিজ অক্ষর থাকলে True"""
+    return any('\u4e00' <= c <= '\u9fff' for c in text)
+
+
 def words_to_sentence_segments(words: list) -> list:
     """Word‑level timestamps থেকে বাক্যভিত্তিক segment (exact time)."""
     segments = []
@@ -270,20 +275,24 @@ def words_to_sentence_segments(words: list) -> list:
 
         # বাক্যের শেষ চিহ্ন পেলে segment শেষ
         if word_text[-1] in '।.?!\n':
+            # চাইনিজের জন্য স্পেস ছাড়া জোড়া, অন্যথায় স্পেস দিয়ে
+            joined = "".join(current_words) if has_chinese(word_text) else " ".join(current_words)
             segments.append({
                 "start": round(current_start, 3),
                 "end": round(w["end"], 3),
-                "text": " ".join(current_words)
+                "text": joined
             })
             current_words = []
             current_start = None
 
     # অবশিষ্ট থাকলে শেষ segment
     if current_words and words:
+        last_word = words[-1].get("word", "")
+        joined = "".join(current_words) if has_chinese(last_word) else " ".join(current_words)
         segments.append({
             "start": round(current_start, 3),
             "end": round(words[-1]["end"], 3),
-            "text": " ".join(current_words)
+            "text": joined
         })
     return segments
 
@@ -379,20 +388,22 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                 pass
 
 
-# ────────────────────────────── Free TTS (edge‑tts) ──────────────────────────────
+# ────────────────────────────── ফ্রি TTS (edge‑tts) ──────────────────────────────
 @app.route("/synthesize", methods=["POST"])
 def synthesize():
     data = request.get_json(force=True)
     text = data.get("text", "").strip()
     voice = data.get("voice", "bn-IN-TanishaaNeural")
-    pitch = data.get("pitch", "-5%")   # default pitch -5% (ভারী)
-    rate  = data.get("rate", "+12%")   # default speed +12% (দ্রুত)
+    pitch = data.get("pitch", "-5%")
+    rate  = data.get("rate", "+12%")
 
     if not text:
         return jsonify({"error": "text required"}), 400
 
+    mp3_path = None
+    wav_path = None
     try:
-        async def gen():
+        async def gen_audio():
             communicate = edge_tts.Communicate(text, voice, pitch=pitch, rate=rate)
             audio_bytes = b""
             async for chunk in communicate.stream():
@@ -400,14 +411,18 @@ def synthesize():
                     audio_bytes += chunk["data"]
             return audio_bytes
 
-        audio = asyncio.run(gen())
+        audio = asyncio.run(gen_audio())
 
-        # mp3 → wav (s16le, 24kHz, mono) → raw PCM
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_mp3:
-            tmp_mp3.write(audio)
-            mp3_path = tmp_mp3.name
+        # mp3 ফাইল টেম্পে রাখি
+        fd, mp3_path = tempfile.mkstemp(suffix=".mp3")
+        os.close(fd)
+        with open(mp3_path, "wb") as f:
+            f.write(audio)
 
-        wav_path = mp3_path.replace(".mp3", ".wav")
+        # wav ফাইলের পাথ তৈরি করি
+        fd, wav_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        # ffmpeg দিয়ে mp3 -> wav (24kHz, mono, s16le)
         subprocess.run([
             "ffmpeg", "-y",
             "-i", mp3_path,
@@ -422,12 +437,17 @@ def synthesize():
         pcm_bytes = wav_bytes[44:]   # WAV header বাদ
         pcm_b64 = base64.b64encode(pcm_bytes).decode()
 
-        os.unlink(mp3_path)
-        os.unlink(wav_path)
-
         return jsonify({"pcm_b64": pcm_b64, "sample_rate": 24000})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        # টেম্প ফাইল ক্লিনআপ
+        for p in (mp3_path, wav_path):
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
 
 
 @app.route("/")
@@ -540,7 +560,7 @@ def dub():
             ratio = tts_dur / target_dur
             ratio = max(0.5, min(2.0, ratio))
 
-            # Chain atempo filters (ffmpeg limit per filter: 0.5-2.0)
+            # Chain atempo filters
             atempo_filters = []
             r = ratio
             while r > 2.0:
@@ -560,7 +580,7 @@ def dub():
 
             seg_files.append({"path": fit_wav, "start": start})
 
-        # 5. Overlay all segments onto base track using ffmpeg amix
+        # 5. Overlay all segments onto base track
         if seg_files:
             filter_parts = []
             inputs = ["-i", base_audio]
