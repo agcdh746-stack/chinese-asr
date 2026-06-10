@@ -832,7 +832,10 @@ async function startDubbing() {
       const pcm = await getTTSSegment(seg.text, voice, geminiKeys, i, segments.length);
       audioSegments.push({ start: seg.start, end: seg.end, pcm });
     } catch(e) {
-      progress.textContent = `❌ Segment ${i+1} error: ${e.message}`;
+      progress.textContent = `❌ Segment ${i+1} TTS error: ${e.message}`;
+      console.error(`TTS segment ${i+1} failed:`, e);
+      btn.disabled = false;
+      return;
     }
     await new Promise(r => setTimeout(r, 50));
   }
