@@ -213,6 +213,16 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
     <label style="margin-top:4px">Groq API Keys <span style="font-size:12px;color:#666">(Translation এর জন্য — Gemini এর বিকল্প)</span></label>
     <textarea id="dubGroqKeys" placeholder="gsk_xxx&#10;gsk_yyy" style="min-height:60px"></textarea>
 
+    <div class="row" style="margin-bottom:8px">
+      <div>
+        <label>🎙️ TTS Provider</label>
+        <select id="ttsProvider">
+          <option value="gemini">Gemini</option>
+          <option value="edge">Edge-TTS</option>
+        </select>
+      </div>
+    </div>
+
     <div class="row" style="margin-bottom:0">
       <div>
         <label>Voice (Gemini)</label>
@@ -251,7 +261,7 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
 
   <div class="card">
     <h2>🔗 Video URL</h2>
-    <input type="text" id="urlInput" placeholder="https://v.kuaishou.com/... or https://www.kuaishou.com/short-video/..." />
+    <input type="text" id="urlInput" placeholder="YouTube / TikTok / Instagram / Kuaishou URL" />
     <button id="submitBtn" onclick="startTranscribe()">Extract Transcript</button>
   </div>
 
@@ -341,6 +351,7 @@ function saveSettings() {
   localStorage.setItem('groq_keys', document.getElementById('groqKeys').value.trim());
   localStorage.setItem('language', document.getElementById('language').value);
   localStorage.setItem(DUB_KEYS_KEY, document.getElementById('dubGeminiKeys').value.trim());
+  localStorage.setItem('tts_provider', document.getElementById('ttsProvider').value);
   localStorage.setItem(DUB_VOICE_KEY, document.getElementById('dubVoice').value);
   localStorage.setItem(DUB_GROQ_KEYS_KEY, document.getElementById('dubGroqKeys').value.trim());
   localStorage.setItem(DUB_PROVIDER_KEY, document.getElementById('dubTranslateProvider').value);
@@ -499,12 +510,14 @@ function dubSaveKeys() {
 function dubLoadKeys() {
   const saved = localStorage.getItem(DUB_KEYS_KEY);
   if (saved) document.getElementById('dubGeminiKeys').value = saved;
+  const ttsProvider = localStorage.getItem('tts_provider');
+  if (ttsProvider) document.getElementById('ttsProvider').value = ttsProvider;
   const voice = localStorage.getItem(DUB_VOICE_KEY);
   if (voice) document.getElementById('dubVoice').value = voice;
   const groqSaved = localStorage.getItem(DUB_GROQ_KEYS_KEY);
   if (groqSaved) document.getElementById('dubGroqKeys').value = groqSaved;
-  const provider = localStorage.getItem(DUB_PROVIDER_KEY);
-  if (provider) document.getElementById('dubTranslateProvider').value = provider;
+  const translateProvider = localStorage.getItem(DUB_PROVIDER_KEY);
+  if (translateProvider) document.getElementById('dubTranslateProvider').value = translateProvider;
   const pitch = localStorage.getItem('fallback_pitch');
   if (pitch) document.getElementById('fallbackPitch').value = pitch;
   const speed = localStorage.getItem('fallback_speed');
@@ -700,6 +713,8 @@ function dubParseSrt() {
 }
 
 // ── TTS Functions ──────────────────────────────────────────────────────────
+let _geminiKeyIdx = 0; // global — সব segment জুড়ে rotate হবে
+
 async function dubCallGemini(text, voice, apiKey) {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${DUB_GEMINI_MODEL}:generateContent?key=${apiKey}`,
@@ -744,36 +759,50 @@ async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-
 }
 
 async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
-  // Gemini থাকলে চেষ্টা করবে, না থাকলে সরাসরি Edge‑TTS
-  if (geminiKeys.length > 0) {
-    let keyIdx = 0;
-    const MAX_ATTEMPTS = 10;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const key = geminiKeys[keyIdx % geminiKeys.length];
-      keyIdx++;
-      try {
-        const pcm = await dubCallGemini(text, geminiVoice, key);
+  const ttsProvider = document.getElementById('ttsProvider').value;
+
+  // Edge-TTS সরাসরি select করা থাকলে Gemini skip
+  if (ttsProvider === 'edge' || geminiKeys.length === 0) {
+    document.getElementById('dubProgress').textContent =
+      `🔊 TTS ${segIdx+1}/${total} (Edge-TTS): "${text.substring(0,25)}..."`;
+    const pitch = document.getElementById('fallbackPitch').value;
+    const speed = document.getElementById('fallbackSpeed').value;
+    return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', pitch, speed);
+  }
+
+  // Gemini — সব key rotate করে চেষ্টা
+  const MAX_ROUNDS = 3;
+  const maxAttempts = geminiKeys.length * MAX_ROUNDS;
+  let cooldown = 800;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const key = geminiKeys[_geminiKeyIdx % geminiKeys.length];
+    _geminiKeyIdx++;
+    try {
+      const pcm = await dubCallGemini(text, geminiVoice, key);
+      document.getElementById('dubProgress').textContent =
+        `🔊 TTS ${segIdx+1}/${total} (Gemini key#${_geminiKeyIdx % geminiKeys.length + 1} ✅): "${text.substring(0,25)}..."`;
+      return pcm;
+    } catch(e) {
+      if (e.code === 429) {
         document.getElementById('dubProgress').textContent =
-          `🔊 TTS ${segIdx+1}/${total} (Gemini ✅): "${text.substring(0,25)}..."`;
-        return pcm;
-      } catch(e) {
-        if (e.code === 429) {
-          const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
-          await new Promise(r => setTimeout(r, delay));
-        } else {
-          break; // Gemini কাজ করবে না → Edge-এ যাও
-        }
+          `⏳ TTS ${segIdx+1}/${total}: key quota, trying next... (${attempt+1}/${maxAttempts})`;
+        await new Promise(r => setTimeout(r, cooldown));
+        if ((attempt + 1) % geminiKeys.length === 0) cooldown = Math.min(cooldown * 1.5, 5000);
+      } else {
+        break;
       }
     }
   }
 
-  // Edge‑TTS fallback (অথবা একমাত্র অপশন)
+  // সব Gemini key শেষ → Edge-TTS fallback
   document.getElementById('dubProgress').textContent =
-    `🔊 TTS ${segIdx+1}/${total} (Edge‑TTS): "${text.substring(0,25)}..."`;
+    `🔊 TTS ${segIdx+1}/${total} (Edge-TTS fallback): "${text.substring(0,25)}..."`;
   const pitch = document.getElementById('fallbackPitch').value;
   const speed = document.getElementById('fallbackSpeed').value;
   return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', pitch, speed);
 }
+
 
 // ── Start Dubbing (Gemini ছাড়াও কাজ করে) ──────────────────────────────────
 async function startDubbing() {
@@ -792,6 +821,7 @@ async function startDubbing() {
   if (!segments.length) { alert('কমপক্ষে একটা translation দিন'); return; }
 
   btn.disabled = true;
+  _geminiKeyIdx = 0; // নতুন dub শুরুতে key rotation reset
   document.getElementById('dubVideoWrap').style.display = 'none';
 
   const audioSegments = [];
