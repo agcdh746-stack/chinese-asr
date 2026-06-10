@@ -6,9 +6,12 @@ import uuid
 import struct
 import asyncio
 import subprocess
+import tempfile
+import base64
 from pathlib import Path
 
 import httpx
+import edge_tts  # ফ্রি TTS (কোনো API key লাগে না)
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_from_directory
 
 app = Flask(__name__)
@@ -216,7 +219,7 @@ async def groq_transcribe(mp3_path: str, groq_keys: list[str], language: str = "
         data = {
             "model": "whisper-large-v3",
             "response_format": "verbose_json",
-            "timestamp_granularities[]": "segment",
+            "timestamp_granularities[]": "word",  # word‑level timestamps
         }
         if language and language != "auto":
             data["language"] = language
@@ -249,6 +252,40 @@ async def groq_transcribe(mp3_path: str, groq_keys: list[str], language: str = "
             raise
 
     raise ValueError(str(last_error or "All Groq keys failed"))
+
+
+def words_to_sentence_segments(words: list) -> list:
+    """Word‑level timestamps থেকে বাক্যভিত্তিক segment (exact time)."""
+    segments = []
+    current_words = []
+    current_start = None
+
+    for w in words:
+        word_text = w.get("word", "").strip()
+        if not word_text:
+            continue
+        if current_start is None:
+            current_start = w["start"]
+        current_words.append(word_text)
+
+        # বাক্যের শেষ চিহ্ন পেলে segment শেষ
+        if word_text[-1] in '।.?!\n':
+            segments.append({
+                "start": round(current_start, 3),
+                "end": round(w["end"], 3),
+                "text": " ".join(current_words)
+            })
+            current_words = []
+            current_start = None
+
+    # অবশিষ্ট থাকলে শেষ segment
+    if current_words and words:
+        segments.append({
+            "start": round(current_start, 3),
+            "end": round(words[-1]["end"], 3),
+            "text": " ".join(current_words)
+        })
+    return segments
 
 
 def split_long_segments(segments: list, max_dur: float = 8.0) -> list:
@@ -305,16 +342,20 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
         result = asyncio.run(groq_transcribe(mp3_path, groq_keys, language))
         yield sse("log", {"msg": f"✅ Transcription done! ({result.get('duration', 0):.1f}s audio)"})
 
-        segments = []
-        for seg in result.get("segments", []):
-            segments.append(
-                {
+        # Word‑level থেকে বাক্য segment
+        words = result.get("words", [])
+        if words:
+            segments = words_to_sentence_segments(words)
+        else:
+            segments = []
+            for seg in result.get("segments", []):
+                segments.append({
                     "start": seg.get("start", 0),
                     "end": seg.get("end", 0),
                     "text": (seg.get("text") or "").strip(),
-                }
-            )
+                })
 
+        # লম্বা segment ভাঙা (8s max)
         segments = split_long_segments(segments, max_dur=8.0)
 
         yield sse(
@@ -336,6 +377,57 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                 os.unlink(p)
             except Exception:
                 pass
+
+
+# ────────────────────────────── Free TTS (edge‑tts) ──────────────────────────────
+@app.route("/synthesize", methods=["POST"])
+def synthesize():
+    data = request.get_json(force=True)
+    text = data.get("text", "").strip()
+    voice = data.get("voice", "bn-IN-TanishaaNeural")
+    pitch = data.get("pitch", "-5%")   # default pitch -5% (ভারী)
+    rate  = data.get("rate", "+12%")   # default speed +12% (দ্রুত)
+
+    if not text:
+        return jsonify({"error": "text required"}), 400
+
+    try:
+        async def gen():
+            communicate = edge_tts.Communicate(text, voice, pitch=pitch, rate=rate)
+            audio_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_bytes += chunk["data"]
+            return audio_bytes
+
+        audio = asyncio.run(gen())
+
+        # mp3 → wav (s16le, 24kHz, mono) → raw PCM
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_mp3:
+            tmp_mp3.write(audio)
+            mp3_path = tmp_mp3.name
+
+        wav_path = mp3_path.replace(".mp3", ".wav")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", mp3_path,
+            "-ar", "24000",
+            "-ac", "1",
+            "-sample_fmt", "s16",
+            wav_path
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        with open(wav_path, "rb") as f:
+            wav_bytes = f.read()
+        pcm_bytes = wav_bytes[44:]   # WAV header বাদ
+        pcm_b64 = base64.b64encode(pcm_bytes).decode()
+
+        os.unlink(mp3_path)
+        os.unlink(wav_path)
+
+        return jsonify({"pcm_b64": pcm_b64, "sample_rate": 24000})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/")
@@ -414,7 +506,6 @@ def dub():
             if not pcm_b64:
                 continue
 
-            import base64
             pcm_bytes = base64.b64decode(pcm_b64)
 
             # Build WAV header (s16le mono)
