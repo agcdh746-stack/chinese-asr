@@ -2,12 +2,14 @@ import os
 import re
 import json
 import time
+import uuid
+import struct
 import asyncio
 import subprocess
 from pathlib import Path
 
 import httpx
-from flask import Flask, request, jsonify, render_template, Response, stream_with_context
+from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_from_directory
 
 app = Flask(__name__)
 
@@ -330,6 +332,157 @@ def transcribe():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.route("/dub", methods=["POST"])
+def dub():
+    data = request.get_json(force=True)
+    video_url = (data.get("video_url") or "").strip()
+    segments  = data.get("segments", [])
+
+    if not video_url:
+        return jsonify({"error": "video_url required"}), 400
+    if not segments:
+        return jsonify({"error": "segments required"}), 400
+
+    job_id   = f"dub_{uuid.uuid4().hex[:8]}"
+    job_dir  = os.path.join(TEMP_DIR, job_id)
+    Path(job_dir).mkdir(parents=True, exist_ok=True)
+
+    video_path = os.path.join(job_dir, "original.mp4")
+    out_path   = os.path.join(job_dir, "dubbed.mp4")
+
+    try:
+        # 1. Download video
+        video_dl_url, _, _ = asyncio.run(get_ks_video_url(video_url))
+        asyncio.run(download_video(video_dl_url, video_path))
+
+        # 2. Get video duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+            capture_output=True, text=True, check=True
+        )
+        duration = float(json.loads(probe.stdout)["format"]["duration"])
+
+        # 3. Build silent base audio track
+        base_audio = os.path.join(job_dir, "base.wav")
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", f"anullsrc=r=24000:cl=mono",
+            "-t", str(duration), base_audio
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # 4. Per-segment: decode PCM → wav, atempo fit, overlay
+        seg_files = []
+        for i, seg in enumerate(segments):
+            start    = float(seg["start"])
+            end      = float(seg["end"])
+            pcm_b64  = seg.get("pcm_b64", "")
+            sr       = int(seg.get("sample_rate", 24000))
+            target_dur = max(0.2, end - start)
+
+            if not pcm_b64:
+                continue
+
+            import base64
+            pcm_bytes = base64.b64decode(pcm_b64)
+
+            # Build WAV header (s16le mono)
+            num_channels   = 1
+            bits_per_sample = 16
+            data_size      = len(pcm_bytes)
+            byte_rate      = sr * num_channels * (bits_per_sample // 8)
+            block_align    = num_channels * (bits_per_sample // 8)
+            chunk_size     = 36 + data_size
+            header = struct.pack(
+                "<4sI4s4sIHHIIHH4sI",
+                b"RIFF", chunk_size, b"WAVE", b"fmt ", 16, 1,
+                num_channels, sr, byte_rate, block_align, bits_per_sample,
+                b"data", data_size
+            )
+            raw_wav = os.path.join(job_dir, f"seg_{i}_raw.wav")
+            with open(raw_wav, "wb") as f:
+                f.write(header + pcm_bytes)
+
+            # Get actual TTS duration
+            probe2 = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_streams", raw_wav],
+                capture_output=True, text=True
+            )
+            try:
+                tts_dur = float(json.loads(probe2.stdout)["streams"][0]["duration"])
+            except Exception:
+                tts_dur = target_dur
+
+            # Calculate atempo (clamp 0.5 – 2.0)
+            ratio = tts_dur / target_dur
+            ratio = max(0.5, min(2.0, ratio))
+
+            # Chain atempo filters (ffmpeg limit per filter: 0.5-2.0)
+            atempo_filters = []
+            r = ratio
+            while r > 2.0:
+                atempo_filters.append("atempo=2.0")
+                r /= 2.0
+            while r < 0.5:
+                atempo_filters.append("atempo=0.5")
+                r /= 0.5
+            atempo_filters.append(f"atempo={r:.4f}")
+            af = ",".join(atempo_filters)
+
+            fit_wav = os.path.join(job_dir, f"seg_{i}_fit.wav")
+            subprocess.run([
+                "ffmpeg", "-y", "-i", raw_wav,
+                "-af", af, fit_wav
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            seg_files.append({"path": fit_wav, "start": start})
+
+        # 5. Overlay all segments onto base track using ffmpeg amix
+        if seg_files:
+            filter_parts = []
+            inputs = ["-i", base_audio]
+            for idx, sf in enumerate(seg_files):
+                inputs += ["-i", sf["path"]]
+                delay_ms = int(sf["start"] * 1000)
+                filter_parts.append(f"[{idx+1}]adelay={delay_ms}|{delay_ms}[d{idx}]")
+
+            mixed_labels = "[0]" + "".join(f"[d{i}]" for i in range(len(seg_files)))
+            filter_parts.append(f"{mixed_labels}amix=inputs={len(seg_files)+1}:normalize=0[aout]")
+            filter_str = ";".join(filter_parts)
+
+            mixed_audio = os.path.join(job_dir, "mixed.wav")
+            subprocess.run(
+                ["ffmpeg", "-y"] + inputs +
+                ["-filter_complex", filter_str, "-map", "[aout]", mixed_audio],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        else:
+            mixed_audio = base_audio
+
+        # 6. Merge with original video (replace audio)
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", mixed_audio,
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "128k",
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-shortest", out_path
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        video_serve_url = f"/dub_video/{job_id}/dubbed.mp4"
+        return jsonify({"video_url": video_serve_url, "job_id": job_id})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/dub_video/<job_id>/<filename>")
+def serve_dub_video(job_id, filename):
+    job_dir = os.path.join(TEMP_DIR, job_id)
+    return send_from_directory(job_dir, filename)
 
 
 @app.route("/health")
