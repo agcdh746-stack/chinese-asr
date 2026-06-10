@@ -199,6 +199,27 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       </div>
     </div>
     <div id="saveMsg" style="font-size:0.82rem;color:#4caf50"></div>
+
+    <hr style="border:none;border-top:1px solid #2a2a2a;margin:14px 0">
+
+    <label>Gemini API Keys <span style="font-size:12px;color:#666">(TTS এর জন্য, প্রতি লাইনে একটা)</span></label>
+    <textarea id="dubGeminiKeys" placeholder="AIza...&#10;AIza..." style="min-height:70px"></textarea>
+    <div class="row" style="margin-bottom:0">
+      <div>
+        <label>Voice</label>
+        <select id="dubVoice">
+          <option value="Schedar">Schedar</option>
+          <option value="Aoede">Aoede</option>
+          <option value="Algenib">Algenib</option>
+          <option value="Achernar">Achernar</option>
+          <option value="Gacrux">Gacrux</option>
+          <option value="Charon">Charon</option>
+          <option value="Kore">Kore</option>
+          <option value="Fenrir">Fenrir</option>
+        </select>
+      </div>
+    </div>
+    <div id="dubKeysStatus" style="font-size:0.82rem;color:#4caf50;margin-top:4px"></div>
   </div>
 
   <div class="card">
@@ -227,30 +248,6 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
   <div class="card" id="dubCard" style="display:none">
     <h2>🎙 Dubbing</h2>
 
-    <div style="background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:12px">
-      <label>Gemini API Keys <span style="font-size:12px;color:#666">(প্রতি লাইনে একটা)</span></label>
-      <textarea id="dubGeminiKeys" placeholder="AIza...&#10;AIza..." style="min-height:70px"></textarea>
-      <div class="row" style="margin-bottom:0">
-        <div>
-          <label>Voice</label>
-          <select id="dubVoice">
-            <option value="Schedar">Schedar</option>
-            <option value="Aoede">Aoede</option>
-            <option value="Algenib">Algenib</option>
-            <option value="Achernar">Achernar</option>
-            <option value="Gacrux">Gacrux</option>
-            <option value="Charon">Charon</option>
-            <option value="Kore">Kore</option>
-            <option value="Fenrir">Fenrir</option>
-          </select>
-        </div>
-        <div style="display:flex;align-items:flex-end">
-          <button class="btn-sm" onclick="dubSaveKeys()" style="width:100%">💾 Save</button>
-        </div>
-      </div>
-      <div id="dubKeysStatus" style="font-size:0.82rem;color:#4caf50;margin-top:4px"></div>
-    </div>
-
     <p style="font-size:0.84rem;color:#888;margin-bottom:10px">
       প্রতিটা segment এর Bengali/English translation নিচে লিখুন বা paste করুন:
     </p>
@@ -272,11 +269,14 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
 window.onload = () => {
   document.getElementById('groqKeys').value = localStorage.getItem('groq_keys') || '';
   document.getElementById('language').value = localStorage.getItem('language') || 'zh';
+  dubLoadKeys();
 };
 
 function saveSettings() {
   localStorage.setItem('groq_keys', document.getElementById('groqKeys').value.trim());
   localStorage.setItem('language', document.getElementById('language').value);
+  localStorage.setItem(DUB_KEYS_KEY, document.getElementById('dubGeminiKeys').value.trim());
+  localStorage.setItem(DUB_VOICE_KEY, document.getElementById('dubVoice').value);
   const msg = document.getElementById('saveMsg');
   msg.textContent = '✅ Saved!';
   setTimeout(() => msg.textContent = '', 2000);
