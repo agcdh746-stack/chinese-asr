@@ -209,6 +209,9 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
 
     <label>Gemini API Keys <span style="font-size:12px;color:#666">(TTS এর জন্য, প্রতি লাইনে একটা)</span></label>
     <textarea id="dubGeminiKeys" placeholder="AIza...&#10;AIza..." style="min-height:70px"></textarea>
+
+    <label style="margin-top:4px">Groq API Keys <span style="font-size:12px;color:#666">(Translation এর জন্য — Gemini এর বিকল্প)</span></label>
+    <textarea id="dubGroqKeys" placeholder="gsk_xxx&#10;gsk_yyy" style="min-height:60px"></textarea>
     <div class="row" style="margin-bottom:0">
       <div>
         <label>Voice</label>
@@ -262,7 +265,7 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
     <!-- Auto Translate Tab -->
     <div id="tabAuto">
       <p style="font-size:0.84rem;color:#888;margin-bottom:10px">
-        Gemini দিয়ে Chinese → Bengali auto translate করবে এবং SRT তৈরি করবে।
+        Gemini বা Groq দিয়ে Chinese → Bengali auto translate করবে এবং SRT তৈরি করবে।
       </p>
       <div class="row" style="margin-bottom:8px">
         <div>
@@ -272,10 +275,15 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
             <option value="English">English</option>
           </select>
         </div>
-        <div style="display:flex;align-items:flex-end">
-          <button class="btn-dub" onclick="dubAutoTranslate()" id="dubTranslateBtn" style="padding:10px;font-size:0.9rem">🌐 Translate</button>
+        <div>
+          <label>Translation Provider</label>
+          <select id="dubTranslateProvider">
+            <option value="gemini">Gemini</option>
+            <option value="groq">Groq (llama)</option>
+          </select>
         </div>
       </div>
+      <button class="btn-dub" onclick="dubAutoTranslate()" id="dubTranslateBtn" style="padding:10px;font-size:0.9rem;margin-bottom:8px">🌐 Translate</button>
       <div id="dubTranslateStatus" style="font-size:0.82rem;color:#aaa;margin-bottom:8px"></div>
     </div>
 
@@ -315,6 +323,8 @@ function saveSettings() {
   localStorage.setItem('language', document.getElementById('language').value);
   localStorage.setItem(DUB_KEYS_KEY, document.getElementById('dubGeminiKeys').value.trim());
   localStorage.setItem(DUB_VOICE_KEY, document.getElementById('dubVoice').value);
+  localStorage.setItem(DUB_GROQ_KEYS_KEY, document.getElementById('dubGroqKeys').value.trim());
+  localStorage.setItem(DUB_PROVIDER_KEY, document.getElementById('dubTranslateProvider').value);
   const msg = document.getElementById('saveMsg');
   msg.textContent = '✅ Saved!';
   setTimeout(() => msg.textContent = '', 2000);
@@ -448,17 +458,21 @@ function copySRT() {
 // ── Dubbing ──────────────────────────────────────────────────────────────────
 
 const DUB_KEYS_KEY = 'chinese_asr_gemini_keys';
+const DUB_GROQ_KEYS_KEY = 'chinese_asr_groq_translate_keys';
 const DUB_VOICE_KEY = 'chinese_asr_gemini_voice';
+const DUB_PROVIDER_KEY = 'chinese_asr_translate_provider';
 const DUB_GEMINI_MODEL = 'gemini-2.5-flash-preview-tts';
 const DUB_SAMPLE_RATE = 24000;
 
 function dubSaveKeys() {
   const keys = document.getElementById('dubGeminiKeys').value.trim();
   const voice = document.getElementById('dubVoice').value;
+  const groqKeys = document.getElementById('dubGroqKeys').value.trim();
   localStorage.setItem(DUB_KEYS_KEY, keys);
   localStorage.setItem(DUB_VOICE_KEY, voice);
+  localStorage.setItem(DUB_GROQ_KEYS_KEY, groqKeys);
   const count = keys.split('\n').filter(k => k.trim()).length;
-  document.getElementById('dubKeysStatus').textContent = `✅ ${count}টা key saved`;
+  document.getElementById('dubKeysStatus').textContent = `✅ ${count}টা Gemini key saved`;
   setTimeout(() => document.getElementById('dubKeysStatus').textContent = '', 2000);
 }
 
@@ -467,6 +481,10 @@ function dubLoadKeys() {
   if (saved) document.getElementById('dubGeminiKeys').value = saved;
   const voice = localStorage.getItem(DUB_VOICE_KEY);
   if (voice) document.getElementById('dubVoice').value = voice;
+  const groqSaved = localStorage.getItem(DUB_GROQ_KEYS_KEY);
+  if (groqSaved) document.getElementById('dubGroqKeys').value = groqSaved;
+  const provider = localStorage.getItem(DUB_PROVIDER_KEY);
+  if (provider) document.getElementById('dubTranslateProvider').value = provider;
 }
 
 function buildDubSegments(segs) {
@@ -483,61 +501,103 @@ function dubSwitchTab(tab) {
   document.getElementById('tabManualBtn').className = 'tab-btn' + (tab === 'manual' ? ' tab-active' : '');
 }
 
-async function dubAutoTranslate() {
-  const keysRaw = document.getElementById('dubGeminiKeys').value.trim();
-  const lang    = document.getElementById('dubTranslateLang').value;
-  const status  = document.getElementById('dubTranslateStatus');
-  const btn     = document.getElementById('dubTranslateBtn');
+// Safe base64 encode for large Uint8Array (avoids call stack overflow)
+function uint8ToBase64(arr) {
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    binary += String.fromCharCode(...arr.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
 
-  if (!keysRaw) { alert('Gemini API keys দিন'); return; }
+async function dubAutoTranslate() {
+  const lang     = document.getElementById('dubTranslateLang').value;
+  const provider = document.getElementById('dubTranslateProvider').value;
+  const status   = document.getElementById('dubTranslateStatus');
+  const btn      = document.getElementById('dubTranslateBtn');
+
+  localStorage.setItem(DUB_PROVIDER_KEY, provider);
+
   if (!lastSegments.length) { alert('আগে transcript করুন'); return; }
 
-  const keys = keysRaw.split('\n').map(k => k.trim()).filter(Boolean);
+  let keys = [];
+  if (provider === 'gemini') {
+    const raw = document.getElementById('dubGeminiKeys').value.trim();
+    if (!raw) { alert('Gemini API keys দিন'); return; }
+    keys = raw.split('\n').map(k => k.trim()).filter(Boolean);
+  } else {
+    const raw = document.getElementById('dubGroqKeys').value.trim();
+    if (!raw) { alert('Settings এ Groq API keys দিন'); return; }
+    keys = raw.split('\n').map(k => k.trim()).filter(Boolean);
+  }
+
   btn.disabled = true;
   dubParsedSegments = [];
 
-  const BATCH = 20; // segments per Gemini call
+  const BATCH = provider === 'groq' ? 15 : 20;
   let keyIdx = 0;
   let allTranslated = [];
 
   for (let i = 0; i < lastSegments.length; i += BATCH) {
     const batch = lastSegments.slice(i, i + BATCH);
-    status.textContent = `⏳ Translating ${i+1}–${Math.min(i+BATCH, lastSegments.length)} / ${lastSegments.length}...`;
+    status.textContent = `⏳ Translating ${i+1}\u2013${Math.min(i+BATCH, lastSegments.length)} / ${lastSegments.length} (${provider})...`;
 
-    const prompt = `Translate the following Chinese subtitles to ${lang}. 
-Return ONLY a JSON array of translated strings in the same order, nothing else.
-Example: ["translation1","translation2"]
-
-Subtitles:
-${batch.map((s,j) => `${j+1}. ${s.text}`).join('\n')}`;
+    const prompt = `Translate the following subtitles to ${lang}.\nReturn ONLY a JSON array of translated strings in the same order, no explanation, no markdown.\nExample: ["translation1","translation2"]\n\nSubtitles:\n${batch.map((s,j) => `${j+1}. ${s.text}`).join('\n')}`;
 
     let done = false; let attempts = 0;
     while (!done && attempts < keys.length) {
       const key = keys[keyIdx % keys.length]; keyIdx++; attempts++;
       try {
-        const resp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
-          {
+        let translations;
+        if (provider === 'gemini') {
+          const resp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+            {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({contents: [{parts: [{text: prompt}]}]})
+            }
+          );
+          if (resp.status === 429) throw Object.assign(new Error('quota'), {code: 429});
+          if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`);
+          const data = await resp.json();
+          let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          text = text.replace(/```json|```/g, '').trim();
+          translations = JSON.parse(text);
+        } else {
+          const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({contents: [{parts: [{text: prompt}]}]})
-          }
-        );
-        if (resp.status === 429) throw Object.assign(new Error('quota'), {code: 429});
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        text = text.replace(/```json|```/g, '').trim();
-        const translations = JSON.parse(text);
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${key}`
+            },
+            body: JSON.stringify({
+              model: 'llama-3.3-70b-versatile',
+              messages: [
+                { role: 'system', content: 'You are a subtitle translator. Always respond with only a JSON array of strings, no explanation.' },
+                { role: 'user', content: prompt }
+              ],
+              temperature: 0.3,
+              max_tokens: 2048
+            })
+          });
+          if (resp.status === 429) throw Object.assign(new Error('quota'), {code: 429});
+          if (!resp.ok) throw new Error(`Groq HTTP ${resp.status}`);
+          const data = await resp.json();
+          let text = data?.choices?.[0]?.message?.content || '';
+          text = text.replace(/```json|```/g, '').trim();
+          translations = JSON.parse(text);
+        }
         batch.forEach((seg, j) => {
           allTranslated.push({ start: seg.start, end: seg.end, text: translations[j] || seg.text });
         });
         done = true;
       } catch(e) {
         if (e.code === 429) {
-          await new Promise(r => setTimeout(r, 500));
+          await new Promise(r => setTimeout(r, 600));
         } else {
-          status.textContent = `❌ Error: ${e.message}`;
+          status.textContent = `\u274C Error: ${e.message}`;
           done = true;
         }
       }
@@ -546,9 +606,8 @@ ${batch.map((s,j) => `${j+1}. ${s.text}`).join('\n')}`;
   }
 
   dubParsedSegments = allTranslated;
-  status.textContent = `✅ ${dubParsedSegments.length}টা segment translate হয়েছে`;
+  status.textContent = `\u2705 ${dubParsedSegments.length}\u09C1া segment translate হয়েছে (${provider})`;
 
-  // Show preview
   showDubPreview();
   btn.disabled = false;
 }
@@ -688,7 +747,7 @@ async function startDubbing() {
       segments: audioSegments.map(s => ({
         start: s.start,
         end: s.end,
-        pcm_b64: btoa(String.fromCharCode(...s.pcm)),
+        pcm_b64: uint8ToBase64(s.pcm),
         sample_rate: DUB_SAMPLE_RATE
       }))
     };
