@@ -11,6 +11,7 @@ import base64
 from pathlib import Path
 
 import httpx
+import edge_tts  # নিশ্চিত থাকতে হবে যেন ইন্সটল করা আছে
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_from_directory
 
 app = Flask(__name__)
@@ -215,7 +216,6 @@ async def groq_transcribe(mp3_path: str, groq_keys: list[str], language: str = "
 
     for idx, groq_key in enumerate(groq_keys, start=1):
         headers = {"Authorization": f"Bearer {groq_key}"}
-        # ✅ একসাথে segment ও word দুটোই চাও
         data = {
             "model": "whisper-large-v3",
             "response_format": "verbose_json",
@@ -312,7 +312,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
         result = asyncio.run(groq_transcribe(mp3_path, groq_keys, language))
         yield sse("log", {"msg": f"✅ Transcription done! ({result.get('duration', 0):.1f}s audio)"})
 
-        # ✅ ডিফল্ট সেগমেন্ট ব্যবহার করো (pause‑ভিত্তিক, সব ভাষায় নির্ভুল)
+        # ✅ ডিফল্ট সেগমেন্ট ব্যবহার
         segments = []
         raw_segments = result.get("segments")
         if raw_segments:
@@ -323,7 +323,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                     "text": (seg.get("text") or "").strip(),
                 })
         else:
-            # fallback (সাধারণত দরকার হয় না)
+            # fallback
             words = result.get("words", [])
             current_words = []
             current_start = None
@@ -374,7 +374,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                 pass
 
 
-# ──────────────────────── edge‑tts CLI (নির্ভরযোগ্য) ────────────────────────
+# ──────────────────────── edge‑tts নির্ভরযোগ্য ফিক্স ────────────────────────
 @app.route("/synthesize", methods=["POST"])
 def synthesize():
     data = request.get_json(force=True)
@@ -389,18 +389,18 @@ def synthesize():
     mp3_path = None
     wav_path = None
     try:
+        # mp3 ফাইল আগে বানাই
         fd, mp3_path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
 
-        subprocess.run([
-            "edge-tts",
-            "--voice", voice,
-            "--text", text,
-            "--pitch", pitch,
-            "--rate", rate,
-            "--write-media", mp3_path
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # edge‑tts Communicate.save() ব্যবহার (স্থিতিশীল)
+        async def gen_mp3():
+            communicate = edge_tts.Communicate(text, voice, pitch=pitch, rate=rate)
+            await communicate.save(mp3_path)
 
+        asyncio.run(gen_mp3())
+
+        # wav ফাইল
         fd, wav_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
         subprocess.run([
