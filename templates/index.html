@@ -212,9 +212,11 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
 
     <label style="margin-top:4px">Groq API Keys <span style="font-size:12px;color:#666">(Translation এর জন্য — Gemini এর বিকল্প)</span></label>
     <textarea id="dubGroqKeys" placeholder="gsk_xxx&#10;gsk_yyy" style="min-height:60px"></textarea>
+
+    <!-- Gemini Voice + Fallback Pitch / Speed -->
     <div class="row" style="margin-bottom:0">
       <div>
-        <label>Voice</label>
+        <label>Voice (Gemini)</label>
         <select id="dubVoice">
           <option value="Schedar">Schedar</option>
           <option value="Aoede">Aoede</option>
@@ -224,6 +226,24 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
           <option value="Charon">Charon</option>
           <option value="Kore">Kore</option>
           <option value="Fenrir">Fenrir</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div>
+        <label>Fallback Pitch</label>
+        <select id="fallbackPitch">
+          <option value="-5%" selected>-5% (ভারী)</option>
+          <option value="0%">0% (স্বাভাবিক)</option>
+          <option value="+5%">+5% (চড়া)</option>
+        </select>
+      </div>
+      <div>
+        <label>Fallback Speed</label>
+        <select id="fallbackSpeed">
+          <option value="-12%">-12% (ধীর)</option>
+          <option value="0%">0% (স্বাভাবিক)</option>
+          <option value="+12%" selected>+12% (দ্রুত)</option>
         </select>
       </div>
     </div>
@@ -325,6 +345,8 @@ function saveSettings() {
   localStorage.setItem(DUB_VOICE_KEY, document.getElementById('dubVoice').value);
   localStorage.setItem(DUB_GROQ_KEYS_KEY, document.getElementById('dubGroqKeys').value.trim());
   localStorage.setItem(DUB_PROVIDER_KEY, document.getElementById('dubTranslateProvider').value);
+  localStorage.setItem('fallback_pitch', document.getElementById('fallbackPitch').value);
+  localStorage.setItem('fallback_speed', document.getElementById('fallbackSpeed').value);
   const msg = document.getElementById('saveMsg');
   msg.textContent = '✅ Saved!';
   setTimeout(() => msg.textContent = '', 2000);
@@ -461,7 +483,7 @@ const DUB_KEYS_KEY = 'chinese_asr_gemini_keys';
 const DUB_GROQ_KEYS_KEY = 'chinese_asr_groq_translate_keys';
 const DUB_VOICE_KEY = 'chinese_asr_gemini_voice';
 const DUB_PROVIDER_KEY = 'chinese_asr_translate_provider';
-const DUB_GEMINI_MODEL = 'gemini-2.5-flash-preview-tts';
+const DUB_GEMINI_MODEL = 'gemini-2.0-flash';   // ✅ সঠিক মডেল
 const DUB_SAMPLE_RATE = 24000;
 
 function dubSaveKeys() {
@@ -485,6 +507,10 @@ function dubLoadKeys() {
   if (groqSaved) document.getElementById('dubGroqKeys').value = groqSaved;
   const provider = localStorage.getItem(DUB_PROVIDER_KEY);
   if (provider) document.getElementById('dubTranslateProvider').value = provider;
+  const pitch = localStorage.getItem('fallback_pitch');
+  if (pitch) document.getElementById('fallbackPitch').value = pitch;
+  const speed = localStorage.getItem('fallback_speed');
+  if (speed) document.getElementById('fallbackSpeed').value = speed;
 }
 
 function buildDubSegments(segs) {
@@ -536,7 +562,7 @@ async function dubAutoTranslate() {
   dubParsedSegments = [];
 
   const BATCH = provider === 'groq' ? 15 : 20;
-  const MAX_ATTEMPTS_PER_BATCH = 30; // total tries before giving up on a batch
+  const MAX_ATTEMPTS_PER_BATCH = 30;
   let keyIdx = 0;
   let allTranslated = [];
 
@@ -601,13 +627,12 @@ async function dubAutoTranslate() {
         batchDone = true;
       } catch(e) {
         if (e.code === 429) {
-          // Exponential backoff + jitter
           const delay = Math.min(1000 * Math.pow(2, attempts), 30000) + Math.random() * 1000;
           status.textContent = `⏳ Rate limited, retrying in ${(delay/1000).toFixed(1)}s...`;
           await new Promise(r => setTimeout(r, delay));
         } else {
           status.textContent = `❌ Error: ${e.message}`;
-          batchDone = true; // non-retryable, move on (but keep previous translations)
+          batchDone = true;
         }
       }
     }
@@ -677,6 +702,7 @@ function dubParseSrt() {
   showDubPreview();
 }
 
+// ── TTS Functions ──────────────────────────────────────────────────────────
 async function dubCallGemini(text, voice, apiKey) {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${DUB_GEMINI_MODEL}:generateContent?key=${apiKey}`,
@@ -703,6 +729,50 @@ async function dubCallGemini(text, voice, apiKey) {
   return arr; // raw PCM s16le 24000hz mono
 }
 
+async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-5%', rate = '+12%') {
+  const resp = await fetch('/synthesize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice, pitch, rate })
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
+  const data = await resp.json();
+  const bin = atob(data.pcm_b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+async function getTTSSegment(text, geminiVoice, geminiKeys) {
+  // প্রথমে Gemini দিয়ে চেষ্টা
+  let keyIdx = 0;
+  const MAX_ATTEMPTS = 10;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const key = geminiKeys[keyIdx % geminiKeys.length];
+    keyIdx++;
+    try {
+      const pcm = await dubCallGemini(text, geminiVoice, key);
+      return pcm;  // সফল হলে ফিরিয়ে দাও
+    } catch(e) {
+      if (e.code === 429) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        break; // অন্য error – Gemini দিয়ে হবে না, edge-tts এ যাও
+      }
+    }
+  }
+
+  // Gemini কাজ করেনি → fallback edge-tts
+  const pitch = document.getElementById('fallbackPitch').value;
+  const speed = document.getElementById('fallbackSpeed').value;
+  return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', pitch, speed);
+}
+
+// ── Start Dubbing ──────────────────────────────────────────────────────────
 async function startDubbing() {
   const keysRaw = document.getElementById('dubGeminiKeys').value.trim();
   const voice   = document.getElementById('dubVoice').value;
@@ -714,7 +784,7 @@ async function startDubbing() {
   if (!videoUrl) { alert('Video URL নেই'); return; }
   if (!dubParsedSegments.length) { alert('আগে SRT parse করুন'); return; }
 
-  const keys = keysRaw.split('\n').map(k => k.trim()).filter(Boolean);
+  const geminiKeys = keysRaw.split('\n').map(k => k.trim()).filter(Boolean);
   const segments = dubParsedSegments.filter(s => s.text);
 
   if (!segments.length) { alert('কমপক্ষে একটা translation দিন'); return; }
@@ -722,50 +792,25 @@ async function startDubbing() {
   btn.disabled = true;
   document.getElementById('dubVideoWrap').style.display = 'none';
 
-  // ---------------------------
-  // FIXED TTS generation loop
-  // ---------------------------
-  const MAX_TTS_ATTEMPTS = 30;   // per segment
-  let keyIdx = 0;
   const audioSegments = [];
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     progress.textContent = `⏳ TTS ${i+1}/${segments.length}: "${seg.text.substring(0,30)}..."`;
 
-    let done = false;
-    let attempts = 0;
-
-    while (!done && attempts < MAX_TTS_ATTEMPTS) {
-      const key = keys[keyIdx % keys.length];
-      keyIdx++;
-      attempts++;
-
-      try {
-        const pcm = await dubCallGemini(seg.text, voice, key);
-        audioSegments.push({ start: seg.start, end: seg.end, pcm });
-        done = true;
-      } catch(e) {
-        if (e.code === 429) {
-          // Exponential backoff + jitter: 2^attempts seconds max 30s
-          const delay = Math.min(1000 * Math.pow(2, attempts), 30000) + Math.random() * 1000;
-          progress.textContent = `⏳ TTS ${i+1}/${segments.length}: rate limited, waiting ${(delay/1000).toFixed(1)}s...`;
-          await new Promise(r => setTimeout(r, delay));
-          // Continue loop, will try next key (or same key if only one key exists)
-        } else {
-          progress.textContent = `❌ Segment ${i+1} error: ${e.message}`;
-          done = true; // non‑retryable error, skip this segment
-        }
-      }
+    try {
+      const pcm = await getTTSSegment(seg.text, voice, geminiKeys);
+      audioSegments.push({ start: seg.start, end: seg.end, pcm });
+    } catch(e) {
+      progress.textContent = `❌ Segment ${i+1} error: ${e.message}`;
     }
-    if (attempts >= MAX_TTS_ATTEMPTS && !done) {
-      progress.textContent = `❌ Segment ${i+1} failed after ${MAX_TTS_ATTEMPTS} attempts.`;
-    }
-    await new Promise(r => setTimeout(r, 100)); // small pause between segments
+
+    // ছোট বিরতি যাতে UI হ্যাং না করে
+    await new Promise(r => setTimeout(r, 50));
   }
 
   if (audioSegments.length === 0) {
-    progress.textContent = '❌ No audio segments generated. Check keys/quota.';
+    progress.textContent = '❌ No audio segments generated.';
     btn.disabled = false;
     return;
   }
@@ -811,6 +856,5 @@ async function startDubbing() {
   btn.disabled = false;
 }
 </script>
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
