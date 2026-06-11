@@ -914,8 +914,8 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
         await new Promise(r => setTimeout(r, cooldown));
         if ((attempt + 1) % geminiKeys.length === 0) cooldown = Math.min(cooldown * 1.5, 5000);
       } else {
-        break;
-      }
+    continue;
+}
     }
   }
 
