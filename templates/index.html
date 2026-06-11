@@ -289,6 +289,7 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
     <div style="display:flex;gap:8px;margin-bottom:14px">
       <button id="tabAutoBtn" class="tab-btn tab-active" onclick="dubSwitchTab('auto')">🤖 Auto Translate</button>
       <button id="tabManualBtn" class="tab-btn" onclick="dubSwitchTab('manual')">✍️ Manual SRT</button>
+      <button id="tabSetupBtn" class="tab-btn" onclick="dubSwitchTab('setup')">⚙️ Setup</button>
     </div>
 
     <!-- Auto Translate Tab -->
@@ -324,6 +325,48 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <textarea id="dubSrtInput" placeholder="1&#10;00:00:00,000 --> 00:00:00,960&#10;কে প্রথমে জঙ্গল থেকে বের হবে&#10;&#10;2&#10;00:00:00,960 --> 00:00:02,580&#10;ধনী, সেনা নাকি গরিব?" style="min-height:160px;font-size:0.82rem"></textarea>
       <button class="btn-sm" onclick="dubParseSrt()" style="margin-bottom:12px">🔍 Parse SRT</button>
     </div>
+
+    <!-- Setup Tab -->
+    <div id="tabSetup" style="display:none">
+      <div style="display:flex;flex-direction:column;gap:16px;padding:4px 0">
+
+        <!-- Proxy / VMess -->
+        <div style="background:#1a2a1a;border-radius:8px;padding:14px">
+          <div style="font-weight:600;margin-bottom:10px">🔒 Proxy / VMess</div>
+          <label style="font-size:0.82rem;color:#aaa">VMess / VLess / SOCKS5 link</label>
+          <input id="setupVmess" type="text" placeholder="vmess://... or vless://... or socks5://..."
+            style="width:100%;margin:6px 0;font-size:0.8rem">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm" onclick="setupSaveProxy()">💾 Save & Start</button>
+            <button class="btn-sm" onclick="setupTestProxy()">🧪 Test Proxy</button>
+            <button class="btn-sm" style="background:#7f1d1d" onclick="setupClearProxy()">🗑 Clear</button>
+          </div>
+          <div id="setupProxyStatus" style="font-size:0.8rem;margin-top:8px;color:#4caf50"></div>
+        </div>
+
+        <!-- Cookies -->
+        <div style="background:#1a2a1a;border-radius:8px;padding:14px">
+          <div style="font-weight:600;margin-bottom:10px">🍪 YouTube Cookies</div>
+          <label style="font-size:0.82rem;color:#aaa">cookies.txt (Netscape format)</label>
+          <textarea id="setupCookies" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com ..."
+            style="min-height:100px;font-size:0.78rem;margin:6px 0"></textarea>
+          <div style="display:flex;gap:8px">
+            <button class="btn-sm" onclick="setupSaveCookies()">💾 Save Cookies</button>
+            <button class="btn-sm" style="background:#7f1d1d" onclick="setupDeleteCookies()">🗑 Delete</button>
+          </div>
+          <div id="setupCookieStatus" style="font-size:0.8rem;margin-top:8px;color:#4caf50"></div>
+        </div>
+
+        <!-- Status -->
+        <div style="background:#1a2a1a;border-radius:8px;padding:14px">
+          <div style="font-weight:600;margin-bottom:10px">📊 Status</div>
+          <button class="btn-sm" onclick="setupLoadStatus()">🔄 Refresh</button>
+          <pre id="setupStatusBox" style="font-size:0.78rem;color:#ccc;margin-top:8px;white-space:pre-wrap"></pre>
+        </div>
+
+      </div>
+    </div>
+
 
     <div id="dubParseStatus" style="font-size:0.82rem;color:#4caf50;margin-bottom:8px"></div>
     <div id="dubSegments"></div>
@@ -534,8 +577,73 @@ let dubParsedSegments = [];
 function dubSwitchTab(tab) {
   document.getElementById('tabAuto').style.display   = tab === 'auto'   ? '' : 'none';
   document.getElementById('tabManual').style.display = tab === 'manual' ? '' : 'none';
+  document.getElementById('tabSetup').style.display  = tab === 'setup'  ? '' : 'none';
   document.getElementById('tabAutoBtn').className   = 'tab-btn' + (tab === 'auto'   ? ' tab-active' : '');
   document.getElementById('tabManualBtn').className = 'tab-btn' + (tab === 'manual' ? ' tab-active' : '');
+  document.getElementById('tabSetupBtn').className  = 'tab-btn' + (tab === 'setup'  ? ' tab-active' : '');
+  if (tab === 'setup') setupLoadStatus();
+}
+
+// ── Setup functions ──────────────────────────────────────────────
+async function setupSaveProxy() {
+  const link = document.getElementById('setupVmess').value.trim();
+  const st   = document.getElementById('setupProxyStatus');
+  st.textContent = '⏳ Saving...';
+  try {
+    const r = await fetch('/setup/config', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ VMESS_LINK: link || null, YTDLP_PROXY: link && link.startsWith('socks5') ? link : null })
+    });
+    const d = await r.json();
+    st.textContent = d.ok ? '✅ Saved & xray started' : '❌ ' + (d.error||'error');
+  } catch(e) { st.textContent = '❌ ' + e.message; }
+}
+
+async function setupTestProxy() {
+  const st = document.getElementById('setupProxyStatus');
+  st.textContent = '⏳ Testing proxy...';
+  try {
+    const r = await fetch('/setup/proxy-test', {method:'POST'});
+    const d = await r.json();
+    st.textContent = d.ok ? `✅ Proxy OK — IP: ${d.ip}` : `❌ Failed: ${d.error}`;
+  } catch(e) { st.textContent = '❌ ' + e.message; }
+}
+
+async function setupClearProxy() {
+  const st = document.getElementById('setupProxyStatus');
+  await fetch('/setup/config', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ VMESS_LINK: '', YTDLP_PROXY: '' })});
+  st.textContent = '🗑 Proxy cleared';
+  document.getElementById('setupVmess').value = '';
+}
+
+async function setupSaveCookies() {
+  const cookies = document.getElementById('setupCookies').value.trim();
+  const st = document.getElementById('setupCookieStatus');
+  if (!cookies) { st.textContent = '❌ Empty'; return; }
+  st.textContent = '⏳ Saving...';
+  try {
+    const r = await fetch('/setup/cookies', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({cookies})});
+    const d = await r.json();
+    st.textContent = d.ok ? `✅ Saved (${d.size} bytes)` : '❌ ' + d.error;
+  } catch(e) { st.textContent = '❌ ' + e.message; }
+}
+
+async function setupDeleteCookies() {
+  const st = document.getElementById('setupCookieStatus');
+  await fetch('/setup/cookies', {method:'DELETE'});
+  st.textContent = '🗑 Cookies deleted';
+  document.getElementById('setupCookies').value = '';
+}
+
+async function setupLoadStatus() {
+  const box = document.getElementById('setupStatusBox');
+  try {
+    const r = await fetch('/setup/status');
+    const d = await r.json();
+    box.textContent = JSON.stringify(d, null, 2);
+  } catch(e) { box.textContent = 'error: ' + e.message; }
 }
 
 function uint8ToBase64(arr) {
