@@ -242,8 +242,8 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <div>
         <label>Fallback Pitch</label>
         <select id="fallbackPitch">
-          <option value="-5%" selected>-5% (ভারী)</option>
-          <option value="0%">0% (স্বাভাবিক)</option>
+          <option value="-5Hz" selected>-5Hz (মাঝারি ভারী)</option>
+          <option value="+0Hz">+0Hz (স্বাভাবিক)</option>
           <option value="+5%">+5% (চড়া)</option>
         </select>
       </div>
@@ -251,7 +251,7 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
         <label>Fallback Speed</label>
         <select id="fallbackSpeed">
           <option value="-12%">-12% (ধীর)</option>
-          <option value="0%">0% (স্বাভাবিক)</option>
+          <option value="+0Hz">+0Hz (স্বাভাবিক)</option>
           <option value="+12%" selected>+12% (দ্রুত)</option>
         </select>
       </div>
@@ -741,7 +741,7 @@ async function dubCallGemini(text, voice, apiKey) {
   return arr;
 }
 
-async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-5%', rate = '+12%') {
+async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-5Hz', rate = '+12%') {
   const resp = await fetch('/synthesize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
