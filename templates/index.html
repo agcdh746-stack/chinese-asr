@@ -897,7 +897,7 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
   // Gemini — সব key rotate করে চেষ্টা
   const MAX_ROUNDS = 3;
   const maxAttempts = geminiKeys.length * MAX_ROUNDS;
-  let cooldown = 800;
+  let cooldown = 6000;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const key = geminiKeys[_geminiKeyIdx % geminiKeys.length];
