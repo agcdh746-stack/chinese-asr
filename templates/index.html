@@ -345,7 +345,6 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
     <div id="dubSegments"></div>
 
     <button class="btn-dub" id="dubBtn" onclick="startDubbing()" style="display:none;margin-top:12px">🎬 Generate Dubbed Video</button>
-    <!-- NEW: Resume button -->
     <button class="btn-sm" id="dubResumeBtn" onclick="resumeDubbing()" style="display:none;margin-top:12px;background:#1d3557">🔄 Resume আগের Job</button>
     <div class="dub-progress" id="dubProgress"></div>
 
@@ -403,9 +402,14 @@ function getSavedJobId() {
   return localStorage.getItem(TTS_JOB_KEY) || '';
 }
 
-// ── Page load: আগের job আছে কিনা দেখো ──────────────────────────────────────
+// ── Page load: আগের job আছে কিনা + পুরনো সেটিংস লোড ─────────────────────
 window.addEventListener('load', async () => {
-  // ... existing onload code এর পরে এটা যোগ করো ...
+  // পুরনো সেটিংস লোড
+  document.getElementById('groqKeys').value = localStorage.getItem('groq_keys') || '';
+  document.getElementById('language').value = localStorage.getItem('language') || 'zh';
+  dubLoadKeys();
+
+  // Resume job check
   const savedId = getSavedJobId();
   if (savedId) {
     try {
@@ -478,7 +482,7 @@ async function startDubbing(resumeMode = false) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     jobId = d.job_id;
-    saveTtsJobId(jobId);  // localStorage এ save — refresh survive করে
+    saveTtsJobId(jobId);
     if (d.resumed) progress.textContent = '🔄 আগের job resume হচ্ছে...';
   } catch(e) {
     progress.textContent = '❌ Job start error: ' + e.message;
@@ -525,7 +529,7 @@ async function startDubbing(resumeMode = false) {
     return;
   }
 
-  // ── /dub এ পাঠাও (আগের মতো) ─────────────────────────────────────────────
+  // ── /dub এ পাঠাও ─────────────────────────────────────────────
   progress.textContent = `✅ TTS শেষ (${ttsResults.filter(r=>r.pcm_b64).length}/${ttsResults.length})। Video বানাচ্ছে...`;
 
   try {
@@ -541,9 +545,7 @@ async function startDubbing(resumeMode = false) {
         })),
     };
 
-    if (!payload.segments.length) {
-      throw new Error('কোনো audio segment নেই');
-    }
+    if (!payload.segments.length) throw new Error('কোনো audio segment নেই');
 
     const resp = await fetch('/dub', {
       method: 'POST',
@@ -566,9 +568,7 @@ async function startDubbing(resumeMode = false) {
     document.getElementById('dubVideoWrap').style.display = 'block';
     videoEl.load();
 
-    // job শেষ — localStorage clear
-    saveTtsJobId('');
-
+    saveTtsJobId('');  // job শেষ
   } catch(e) {
     progress.textContent = '❌ Video error: ' + e.message;
   }
@@ -581,14 +581,7 @@ async function resumeDubbing() {
   await startDubbing(true);
 }
 
-// ── সব আগের ফাংশন (startTranscribe, dubAutoTranslate, dubParseSrt, ইত্যাদি) নিচে অপরিবর্তিত আছে ──
-// (উপরে যে ফাংশনগুলো replace করা হয়েছে সেগুলো বাদে)
-
-window.onload = () => {
-  document.getElementById('groqKeys').value = localStorage.getItem('groq_keys') || '';
-  document.getElementById('language').value = localStorage.getItem('language') || 'zh';
-  dubLoadKeys();
-};
+// ── বাকি সব পুরনো ফাংশন (startTranscribe, dubAutoTranslate, dubParseSrt, setup...) নিচে ──
 
 function saveSettings() {
   localStorage.setItem('groq_keys', document.getElementById('groqKeys').value.trim());
@@ -730,7 +723,6 @@ function copySRT() {
 }
 
 // ── Dubbing ──────────────────────────────────────────────────────────────────
-
 const DUB_KEYS_KEY = 'chinese_asr_gemini_keys';
 const DUB_GROQ_KEYS_KEY = 'chinese_asr_groq_translate_keys';
 const DUB_VOICE_KEY = 'chinese_asr_gemini_voice';
