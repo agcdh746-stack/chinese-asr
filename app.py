@@ -132,17 +132,32 @@ async def wait_for_ks_api(max_wait_ms: int = 10000) -> bool:
     return False
 
 
+BLOCKED_KS_PATHS = ("/new-reco", "/login", "/captcha", "/error", "/404")
+
 async def resolve_ks_url(url: str) -> str:
     direct = extract_photo_id(url)
     if direct:
         return url
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Referer": "https://www.kuaishou.com/",
     }
     try:
         async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers=headers) as client:
             resp = await client.get(url)
-            return str(resp.url)
+            final_url = str(resp.url)
+            # Kuaishou geo-block / login wall detect
+            from urllib.parse import urlparse
+            path = urlparse(final_url).path
+            if any(path.startswith(p) for p in BLOCKED_KS_PATHS):
+                raise ValueError(
+                    f"Kuaishou blocked this request (redirected to {path}). "
+                    "Railway IP is likely geo-blocked. Use a proxy (KS_PROXY env)."
+                )
+            return final_url
+    except ValueError:
+        raise
     except Exception:
         return url
 
@@ -506,6 +521,9 @@ def synthesize():
 
         return jsonify({"pcm_b64": pcm_b64, "sample_rate": 24000})
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[synthesize ERROR] {e}", flush=True)
         return jsonify({"error": str(e)}), 500
     finally:
         for p in (mp3_path, wav_path):
