@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -904,7 +905,8 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
           gemini_key: key,
           job_id: currentJobId,
           start: dubParsedSegments[segIdx].start,
-          end: dubParsedSegments[segIdx].end
+          end: dubParsedSegments[segIdx].end,
+          target_language: document.getElementById('dubTranslateLang').value
         };
         const pcm = await dubCallServerTTS(text, geminiVoice, null, null, extra);
         document.getElementById('dubProgress').textContent = 
@@ -1049,3 +1051,4 @@ async function startDubbing() {
 </script>
 </body>
 </html>
+```
