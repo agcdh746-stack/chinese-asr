@@ -961,7 +961,10 @@ async function startDubbing() {
       btn.disabled = false;
       return;
     }
-    await new Promise(r => setTimeout(r, 6000));
+    // rate-limit delay only for Gemini
+const provider = document.getElementById('ttsProvider').value;
+const delayMs = (provider === 'gemini') ? 6000 : 200;
+await new Promise(r => setTimeout(r, delayMs));
   }
 
   if (audioSegments.length === 0) {
