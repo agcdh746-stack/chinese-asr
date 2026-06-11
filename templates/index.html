@@ -341,14 +341,12 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <button class="btn-sm" onclick="dubParseSrt()" style="margin-bottom:12px">🔍 Parse SRT</button>
     </div>
 
-
-
-
-
     <div id="dubParseStatus" style="font-size:0.82rem;color:#4caf50;margin-bottom:8px"></div>
     <div id="dubSegments"></div>
 
     <button class="btn-dub" id="dubBtn" onclick="startDubbing()" style="display:none;margin-top:12px">🎬 Generate Dubbed Video</button>
+    <!-- NEW: Resume button -->
+    <button class="btn-sm" id="dubResumeBtn" onclick="resumeDubbing()" style="display:none;margin-top:12px;background:#1d3557">🔄 Resume আগের Job</button>
     <div class="dub-progress" id="dubProgress"></div>
 
     <div id="dubVideoWrap">
@@ -394,6 +392,198 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
 </div>
 
 <script>
+// ── Job state (localStorage তে save হয় — refresh করলেও থাকে) ──────────────
+const TTS_JOB_KEY = 'chinese_asr_tts_job_id';
+
+function saveTtsJobId(id) {
+  if (id) localStorage.setItem(TTS_JOB_KEY, id);
+  else localStorage.removeItem(TTS_JOB_KEY);
+}
+function getSavedJobId() {
+  return localStorage.getItem(TTS_JOB_KEY) || '';
+}
+
+// ── Page load: আগের job আছে কিনা দেখো ──────────────────────────────────────
+window.addEventListener('load', async () => {
+  // ... existing onload code এর পরে এটা যোগ করো ...
+  const savedId = getSavedJobId();
+  if (savedId) {
+    try {
+      const r = await fetch(`/tts/job/${savedId}`);
+      if (r.ok) {
+        const job = await r.json();
+        if (job.status === 'complete' || job.status === 'running' || job.status === 'pending') {
+          document.getElementById('dubProgress').textContent =
+            `🔄 আগের job পাওয়া গেছে (${job.done}/${job.total} done) — Resume করতে পারো`;
+          document.getElementById('dubResumeBtn').style.display = 'inline-block';
+        }
+      }
+    } catch(e) {}
+  }
+});
+
+// ── Helper: uint8 → base64 ──────────────────────────────────────────────────
+function uint8ToBase64(arr) {
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < arr.length; i += chunkSize)
+    binary += String.fromCharCode(...arr.subarray(i, i + chunkSize));
+  return btoa(binary);
+}
+
+// ── Start Dubbing  (server-side job) ────────────────────────────────────────
+async function startDubbing(resumeMode = false) {
+  const keysRaw   = document.getElementById('dubGeminiKeys').value.trim();
+  const voice     = document.getElementById('dubVoice').value;
+  const videoUrl  = document.getElementById('urlInput').value.trim();
+  const progress  = document.getElementById('dubProgress');
+  const btn       = document.getElementById('dubBtn');
+  const pitch     = document.getElementById('fallbackPitch').value;
+  const speed     = document.getElementById('fallbackSpeed').value;
+
+  if (!videoUrl)             { alert('Video URL নেই'); return; }
+  if (!dubParsedSegments.length) { alert('আগে SRT parse করুন'); return; }
+
+  const geminiKeys = keysRaw
+    ? keysRaw.split('\n').map(k => k.trim()).filter(Boolean)
+    : [];
+
+  const segments = dubParsedSegments
+    .filter(s => s.text)
+    .map(s => ({ start: s.start, end: s.end, text: s.text }));
+
+  if (!segments.length) { alert('কমপক্ষে একটা translation দিন'); return; }
+
+  btn.disabled = true;
+  document.getElementById('dubResumeBtn').style.display = 'none';
+  document.getElementById('dubVideoWrap').style.display = 'none';
+
+  // ── Job শুরু ──────────────────────────────────────────────────────────────
+  progress.textContent = '⏳ Server এ TTS job শুরু হচ্ছে...';
+
+  let jobId;
+  try {
+    const r = await fetch('/tts/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        segments,
+        gemini_keys: geminiKeys,
+        voice,
+        edge_pitch:  pitch,
+        edge_rate:   speed,
+        resume_id:   resumeMode ? getSavedJobId() : '',
+      }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    jobId = d.job_id;
+    saveTtsJobId(jobId);  // localStorage এ save — refresh survive করে
+    if (d.resumed) progress.textContent = '🔄 আগের job resume হচ্ছে...';
+  } catch(e) {
+    progress.textContent = '❌ Job start error: ' + e.message;
+    btn.disabled = false;
+    return;
+  }
+
+  // ── SSE দিয়ে progress দেখো ──────────────────────────────────────────────
+  let ttsResults = null;
+
+  await new Promise((resolve) => {
+    const es = new EventSource(`/tts/status/${jobId}`);
+
+    es.addEventListener('progress', e => {
+      const d = JSON.parse(e.data);
+      const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+      const preview = d.seg_text ? `"${d.seg_text}..."` : '';
+      progress.textContent =
+        `🔊 TTS: ${d.done}/${d.total} (${pct}%) ${preview}`;
+    });
+
+    es.addEventListener('done', e => {
+      const d = JSON.parse(e.data);
+      ttsResults = d.results;
+      es.close();
+      resolve();
+    });
+
+    es.addEventListener('error', e => {
+      try {
+        const d = JSON.parse(e.data);
+        progress.textContent = '❌ ' + d.msg;
+      } catch {
+        progress.textContent = '❌ SSE connection error';
+      }
+      es.close();
+      resolve();
+    });
+  });
+
+  if (!ttsResults || !ttsResults.length) {
+    progress.textContent = '❌ TTS কোনো result আসেনি';
+    btn.disabled = false;
+    return;
+  }
+
+  // ── /dub এ পাঠাও (আগের মতো) ─────────────────────────────────────────────
+  progress.textContent = `✅ TTS শেষ (${ttsResults.filter(r=>r.pcm_b64).length}/${ttsResults.length})। Video বানাচ্ছে...`;
+
+  try {
+    const payload = {
+      video_url: videoUrl,
+      segments: ttsResults
+        .filter(r => r.pcm_b64)
+        .map(r => ({
+          start:       r.start,
+          end:         r.end,
+          pcm_b64:     r.pcm_b64,
+          sample_rate: 24000,
+        })),
+    };
+
+    if (!payload.segments.length) {
+      throw new Error('কোনো audio segment নেই');
+    }
+
+    const resp = await fetch('/dub', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+
+    const result = await resp.json();
+    progress.textContent = '✅ Done! Video ready।';
+
+    const videoEl = document.getElementById('dubVideo');
+    const dlLink  = document.getElementById('dubDownload');
+    videoEl.src = result.video_url;
+    dlLink.href = result.video_url;
+    document.getElementById('dubVideoWrap').style.display = 'block';
+    videoEl.load();
+
+    // job শেষ — localStorage clear
+    saveTtsJobId('');
+
+  } catch(e) {
+    progress.textContent = '❌ Video error: ' + e.message;
+  }
+
+  btn.disabled = false;
+}
+
+// Resume button handler
+async function resumeDubbing() {
+  await startDubbing(true);
+}
+
+// ── সব আগের ফাংশন (startTranscribe, dubAutoTranslate, dubParseSrt, ইত্যাদি) নিচে অপরিবর্তিত আছে ──
+// (উপরে যে ফাংশনগুলো replace করা হয়েছে সেগুলো বাদে)
+
 window.onload = () => {
   document.getElementById('groqKeys').value = localStorage.getItem('groq_keys') || '';
   document.getElementById('language').value = localStorage.getItem('language') || 'zh';
@@ -662,15 +852,7 @@ async function setupLoadStatus() {
   } catch(e) { box.textContent = 'error: ' + e.message; }
 }
 
-function uint8ToBase64(arr) {
-  let binary = '';
-  const chunkSize = 8192;
-  for (let i = 0; i < arr.length; i += chunkSize) {
-    binary += String.fromCharCode(...arr.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
+// ── Auto Translate ও Parse SRT ── (আগের মতো রাখা হলো)
 async function dubAutoTranslate() {
   const lang     = document.getElementById('dubTranslateLang').value;
   const provider = document.getElementById('dubTranslateProvider').value;
@@ -702,7 +884,7 @@ async function dubAutoTranslate() {
 
   for (let i = 0; i < lastSegments.length; i += BATCH) {
     const batch = lastSegments.slice(i, i + BATCH);
-    status.textContent = `⏳ Translating ${i+1}\u2013${Math.min(i+BATCH, lastSegments.length)} / ${lastSegments.length} (${provider})...`;
+    status.textContent = `⏳ Translating ${i+1}–${Math.min(i+BATCH, lastSegments.length)} / ${lastSegments.length} (${provider})...`;
 
     const prompt = `Translate the following subtitles to ${lang}.\nReturn ONLY a JSON array of translated strings in the same order, no explanation, no markdown.\nExample: ["translation1","translation2"]\n\nSubtitles:\n${batch.map((s,j) => `${j+1}. ${s.text}`).join('\n')}`;
 
@@ -834,183 +1016,6 @@ function dubParseSrt() {
 
   status.textContent = `✅ ${dubParsedSegments.length}টা segment parse হয়েছে`;
   showDubPreview();
-}
-
-// ── TTS Functions ──────────────────────────────────────────────────────────
-let _geminiKeyIdx = 0; // global — সব segment জুড়ে rotate হবে
-
-async function dubCallGemini(text, voice, apiKey) {
-  const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${DUB_GEMINI_MODEL}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        contents: [{parts: [{text}]}],
-        generationConfig: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {voiceConfig: {prebuiltVoiceConfig: {voiceName: voice}}}
-        }
-      })
-    }
-  );
-  if (resp.status === 429) throw Object.assign(new Error('quota'), {code: 429});
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = await resp.json();
-  const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!b64) throw new Error('No audio data');
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return arr;
-}
-
-async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-5Hz', rate = '+12%') {
-  const resp = await fetch('/synthesize', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice, pitch, rate })
-  });
-  if (!resp.ok) {
-    const err = await resp.json();
-    throw new Error(err.error || `HTTP ${resp.status}`);
-  }
-  const data = await resp.json();
-  const bin = atob(data.pcm_b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return arr;
-}
-
-async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
-  const ttsProvider = document.getElementById('ttsProvider').value;
-
-  // Edge-TTS সরাসরি select করা থাকলে Gemini skip
-  if (ttsProvider === 'edge' || geminiKeys.length === 0) {
-    document.getElementById('dubProgress').textContent =
-      `🔊 TTS ${segIdx+1}/${total} (Edge-TTS): "${text.substring(0,25)}..."`;
-    const pitch = document.getElementById('fallbackPitch').value;
-    const speed = document.getElementById('fallbackSpeed').value;
-    return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', pitch, speed);
-  }
-
-  // Gemini — সব key rotate করে চেষ্টা
-  const MAX_ROUNDS = 1;  // 3 থেকে 1
-  const maxAttempts = geminiKeys.length * MAX_ROUNDS;
-  let cooldown = 6000;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const key = geminiKeys[_geminiKeyIdx % geminiKeys.length];
-    _geminiKeyIdx++;
-    try {
-      const pcm = await dubCallGemini(text, geminiVoice, key);
-      document.getElementById('dubProgress').textContent =
-        `🔊 TTS ${segIdx+1}/${total} (Gemini key#${_geminiKeyIdx % geminiKeys.length + 1} ✅): "${text.substring(0,25)}..."`;
-      return pcm;
-    } catch(e) {
-      if (e.code === 429) {
-        document.getElementById('dubProgress').textContent =
-          `⏳ TTS ${segIdx+1}/${total}: key quota, trying next... (${attempt+1}/${maxAttempts})`;
-        await new Promise(r => setTimeout(r, cooldown));
-        if ((attempt + 1) % geminiKeys.length === 0) cooldown = Math.min(cooldown * 1.5, 60000);  // 5000 থেকে 60000
-      } else {
-    continue;
-}
-    }
-  }
-
-  // সব Gemini key শেষ → Edge-TTS fallback
-  document.getElementById('dubProgress').textContent =
-    `🔊 TTS ${segIdx+1}/${total} (Edge-TTS fallback): "${text.substring(0,25)}..."`;
-  const pitch = document.getElementById('fallbackPitch').value;
-  const speed = document.getElementById('fallbackSpeed').value;
-  return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', pitch, speed);
-}
-
-
-// ── Start Dubbing (Gemini ছাড়াও কাজ করে) ──────────────────────────────────
-async function startDubbing() {
-  const keysRaw = document.getElementById('dubGeminiKeys').value.trim();
-  const voice   = document.getElementById('dubVoice').value;
-  const videoUrl = document.getElementById('urlInput').value.trim();
-  const progress = document.getElementById('dubProgress');
-  const btn      = document.getElementById('dubBtn');
-
-  if (!videoUrl) { alert('Video URL নেই'); return; }
-  if (!dubParsedSegments.length) { alert('আগে SRT parse করুন'); return; }
-
-  const geminiKeys = keysRaw ? keysRaw.split('\n').map(k => k.trim()).filter(Boolean) : [];
-  const segments = dubParsedSegments.filter(s => s.text);
-
-  if (!segments.length) { alert('কমপক্ষে একটা translation দিন'); return; }
-
-  btn.disabled = true;
-  _geminiKeyIdx = 0; // নতুন dub শুরুতে key rotation reset
-  document.getElementById('dubVideoWrap').style.display = 'none';
-
-  const audioSegments = [];
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    try {
-      const pcm = await getTTSSegment(seg.text, voice, geminiKeys, i, segments.length);
-      audioSegments.push({ start: seg.start, end: seg.end, pcm });
-    } catch(e) {
-      progress.textContent = `❌ Segment ${i+1} TTS error: ${e.message}`;
-      console.error(`TTS segment ${i+1} failed:`, e);
-      btn.disabled = false;
-      return;
-    }
-    // rate-limit delay only for Gemini
-const provider = document.getElementById('ttsProvider').value;
-const delayMs = (provider === 'gemini') ? 6000 : 200;
-await new Promise(r => setTimeout(r, delayMs));
-  }
-
-  if (audioSegments.length === 0) {
-    progress.textContent = '❌ No audio segments generated. Check server logs or try Edge‑TTS.';
-    btn.disabled = false;
-    return;
-  }
-
-  progress.textContent = `✅ TTS done (${audioSegments.length}/${segments.length}). Sending to server...`;
-
-  try {
-    const payload = {
-      video_url: videoUrl,
-      segments: audioSegments.map(s => ({
-        start: s.start,
-        end: s.end,
-        pcm_b64: uint8ToBase64(s.pcm),
-        sample_rate: DUB_SAMPLE_RATE
-      }))
-    };
-
-    const resp = await fetch('/dub', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.error || `HTTP ${resp.status}`);
-    }
-
-    const result = await resp.json();
-    progress.textContent = '✅ Done! Video ready.';
-
-    const videoEl = document.getElementById('dubVideo');
-    const dlLink  = document.getElementById('dubDownload');
-    videoEl.src = result.video_url;
-    dlLink.href = result.video_url;
-    document.getElementById('dubVideoWrap').style.display = 'block';
-    videoEl.load();
-  } catch(e) {
-    progress.textContent = '❌ Error: ' + e.message;
-  }
-
-  btn.disabled = false;
 }
 </script>
 </body>
