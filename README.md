@@ -53,7 +53,7 @@ It's not just TTS. It's **emotional voice cloning for video dubbing**.
 
 ---
 
-## 🚀 Quick Start (Docker only)
+## 🚀 Quick Start
 
 ```bash
 docker pull your-dockerhub/kwaidub-ai:latest
@@ -62,7 +62,7 @@ docker run -d -p 3000:3000 --name kwaidub your-dockerhub/kwaidub-ai:latest
 
 Then open http://localhost:3000.
 No Python, no pip, no requirements.txt – the whole app is inside the container.
-
+u can use Railway for server.its have $5 free hobby plan, thats enough.
 ---
 
 🔑 How to Set Up API Keys
