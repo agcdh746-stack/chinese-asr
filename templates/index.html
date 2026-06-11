@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -861,7 +860,7 @@ async function dubCallGemini(text, voice, apiKey) {
   return arr;
 }
 
-// 🔥 Server-side TTS Call (Extra parameters for Emotion Mimic)
+// Server-side TTS Call (Extra parameters for Emotion Mimic)
 async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-5Hz', rate = '+12%', extra = {}) {
   const resp = await fetch('/synthesize', {
     method: 'POST',
@@ -882,8 +881,8 @@ async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-
 async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
   const ttsProvider = document.getElementById('ttsProvider').value;
 
-  // 1. Edge-TTS সরাসরি select করা থাকলে Gemini skip
-  if (ttsProvider === 'edge' || geminiKeys.length === 0) {
+  // 1. Edge-TTS সরাসরি select করা থাকলে
+  if (ttsProvider === 'edge') {
     document.getElementById('dubProgress').textContent =
       `🔊 TTS ${segIdx+1}/${total} (Edge-TTS): "${text.substring(0,25)}..."`;
     const pitch = document.getElementById('fallbackPitch').value;
@@ -893,10 +892,9 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
 
   // 🔥 2. Gemini Emotion Mimic (Server-side Multimodal Routing)
   if (ttsProvider === 'gemini_emotion') {
-    let cooldown = 6000;
-    const maxAttempts = geminiKeys.length; // ট্রাই করবে সব কী দিয়ে
+    if (geminiKeys.length === 0) throw new Error('Gemini keys required for Emotion Mimic');
     
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    while (true) {
       const key = geminiKeys[_geminiKeyIdx % geminiKeys.length];
       _geminiKeyIdx++;
       try {
@@ -915,51 +913,42 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
       } catch(e) {
         if (e.message && e.message.includes('429')) {
           document.getElementById('dubProgress').textContent = 
-            `⏳ TTS ${segIdx+1}/${total}: key quota, trying next...`;
-          await new Promise(r => setTimeout(r, cooldown));
+            `⏳ TTS ${segIdx+1}/${total}: 429, waiting 12s...`;
+          await new Promise(r => setTimeout(r, 12000));
         } else {
           console.error(`Emotion TTS Failed for key`, e);
-          continue; // পরের কীতে যাবে
+          await new Promise(r => setTimeout(r, 5000));
         }
       }
     }
-    
-    // যদি সব Gemini কী ফেইল করে, Edge এ ফলব্যাক
-    document.getElementById('dubProgress').textContent = `🔊 TTS ${segIdx+1}/${total} (Edge-TTS fallback)...`;
-    return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', document.getElementById('fallbackPitch').value, document.getElementById('fallbackSpeed').value);
   }
 
-  // 3. Normal Gemini (Client-side API call)
-  const MAX_ROUNDS = 1; 
-  const maxAttempts = geminiKeys.length * MAX_ROUNDS;
-  let cooldown = 6000;
+  // 3. Normal Gemini (Client-side API call) — 🔥 FIXED VERSION
+  if (geminiKeys.length === 0) {
+    throw new Error('No Gemini API keys configured');
+  }
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  while (true) {
     const key = geminiKeys[_geminiKeyIdx % geminiKeys.length];
     _geminiKeyIdx++;
+    
     try {
       const pcm = await dubCallGemini(text, geminiVoice, key);
       document.getElementById('dubProgress').textContent =
         `🔊 TTS ${segIdx+1}/${total} (Gemini ✅): "${text.substring(0,25)}..."`;
       return pcm;
-    } catch(e) {
+    } catch (e) {
       if (e.code === 429) {
         document.getElementById('dubProgress').textContent =
-          `⏳ TTS ${segIdx+1}/${total}: key quota, trying next...`;
-        await new Promise(r => setTimeout(r, cooldown));
-        if ((attempt + 1) % geminiKeys.length === 0) cooldown = Math.min(cooldown * 1.5, 60000); 
+          `⏳ TTS ${segIdx+1}/${total}: 429, waiting 12s...`;
+        await new Promise(r => setTimeout(r, 12000));
       } else {
-        continue;
+        document.getElementById('dubProgress').textContent =
+          `⚠️ TTS ${segIdx+1}/${total}: ${e.message}, retrying...`;
+        await new Promise(r => setTimeout(r, 5000));
       }
     }
   }
-
-  // সব Gemini key শেষ → Edge-TTS fallback
-  document.getElementById('dubProgress').textContent =
-    `🔊 TTS ${segIdx+1}/${total} (Edge-TTS fallback): "${text.substring(0,25)}..."`;
-  const pitch = document.getElementById('fallbackPitch').value;
-  const speed = document.getElementById('fallbackSpeed').value;
-  return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', pitch, speed);
 }
 
 
@@ -997,9 +986,9 @@ async function startDubbing() {
       return;
     }
     
-    // rate-limit delay
+    // Rate-limit delay between segments — 🔥 FIXED
     const provider = document.getElementById('ttsProvider').value;
-    const delayMs = (provider === 'gemini' || provider === 'gemini_emotion') ? 6000 : 200;
+    const delayMs = (provider === 'gemini' || provider === 'gemini_emotion') ? 12000 : 200;
     await new Promise(r => setTimeout(r, delayMs));
   }
 
@@ -1051,4 +1040,3 @@ async function startDubbing() {
 </script>
 </body>
 </html>
-```
