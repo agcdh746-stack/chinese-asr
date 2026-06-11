@@ -702,6 +702,7 @@ def dub():
 
     video_path = os.path.join(job_dir, "original.mp4")
     try:
+        # ---- ডাউনলোড ভিডিও ----
         platform = get_platform(video_url)
         if platform == 'kuaishou':
             video_dl_url, _, _ = asyncio.run(get_ks_video_url(video_url))
@@ -710,57 +711,53 @@ def dub():
             def noop(msg): pass
             video_path = ytdlp_download(video_url, job_dir, noop)
 
-        # Get actual video duration
+        # ---- ভিডিওর দৈর্ঘ্য বের করি ----
         probe = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", video_path],
             capture_output=True, text=True, check=True
         )
         streams = json.loads(probe.stdout)["streams"]
-        audio_duration = None
+        video_duration = None
         for s in streams:
-            if s["codec_type"] == "audio":
-                audio_duration = float(s.get("duration", 0))
+            if s["codec_type"] == "video":
+                video_duration = float(s.get("duration", 0))
                 break
-        if not audio_duration:
-            probe = subprocess.run(
+        if not video_duration:
+            probe_fmt = subprocess.run(
                 ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
                 capture_output=True, text=True, check=True
             )
-            audio_duration = float(json.loads(probe.stdout)["format"]["duration"])
-        total_duration = audio_duration
+            video_duration = float(json.loads(probe_fmt.stdout)["format"]["duration"])
 
-        # Base silent track
-        base_audio = os.path.join(job_dir, "base.wav")
+        # ---- সাইলেন্ট অডিও (পুরো দৈর্ঘ্যের) ----
+        silent_wav = os.path.join(job_dir, "silent.wav")
         subprocess.run([
-            "ffmpeg", "-y", "-f", "lavfi",
-            "-i", "anullsrc=r=24000:cl=stereo",
-            "-t", f"{total_duration:.3f}", base_audio
+            "ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=stereo",
+            "-t", f"{video_duration:.3f}", silent_wav
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # Process each segment
-        seg_audio_files = []
+        # ---- প্রতিটি সেগমেন্টের জন্য TTS তৈরি ----
+        seg_wavs = []  # (start_time, wav_path)
         default_voice = "bn-IN-TanishaaNeural"
         default_pitch = "-5Hz"
 
         for i, seg in enumerate(segments):
             start = float(seg["start"])
-            end   = float(seg["end"])
+            end = float(seg["end"])
             target_dur = max(0.3, end - start)
             text = seg.get("text", "").strip()
             if not text:
                 continue
 
-            # Calculate rate to match target duration
+            # অক্ষর অনুযায়ী রেট ক্যালকুলেশন
             char_count = len(text)
-            normal_dur = char_count / 13.5
-            if normal_dur < 0.3:
-                normal_dur = 0.3
+            normal_dur = max(0.3, char_count / 13.5)
             rate_factor = normal_dur / target_dur
             rate_factor = max(0.5, min(2.0, rate_factor))
             rate_percent = (rate_factor - 1) * 100
             rate_str = f"{rate_percent:+.0f}%"
 
-            # Generate TTS with exact rate
+            # TTS জেনারেট
             with app.test_request_context(
                 "/synthesize",
                 method="POST",
@@ -779,12 +776,13 @@ def dub():
                 sr = synth_data.get("sample_rate", 24000)
 
             pcm_bytes = base64.b64decode(pcm_b64)
-            # Build WAV header
+            # PCM থেকে WAV তৈরি
+            wav_file = os.path.join(job_dir, f"seg_{i:04d}.wav")
             num_channels = 1
             bits = 16
             data_size = len(pcm_bytes)
-            byte_rate = sr * num_channels * (bits//8)
-            block_align = num_channels * (bits//8)
+            byte_rate = sr * num_channels * (bits // 8)
+            block_align = num_channels * (bits // 8)
             chunk_size = 36 + data_size
             header = struct.pack(
                 "<4sI4s4sIHHIIHH4sI",
@@ -792,13 +790,12 @@ def dub():
                 num_channels, sr, byte_rate, block_align, bits,
                 b"data", data_size
             )
-            raw_wav = os.path.join(job_dir, f"seg_{i}_raw.wav")
-            with open(raw_wav, "wb") as f:
+            with open(wav_file, "wb") as f:
                 f.write(header + pcm_bytes)
 
-            # Verify actual duration
+            # প্রয়োজনে দৈর্ঘ্য সামান্য অ্যাডজাস্ট (শুধু বড় ডেভিয়েশন থাকলে)
             probe2 = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", raw_wav],
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", wav_file],
                 capture_output=True, text=True
             )
             try:
@@ -806,60 +803,64 @@ def dub():
             except:
                 actual_dur = target_dur
 
-            # Only minimal adjustment if still off by >0.1s
-            final_wav = raw_wav
-            if abs(actual_dur - target_dur) > 0.1:
+            final_wav = wav_file
+            if abs(actual_dur - target_dur) > 0.15:
                 ratio = target_dur / actual_dur
                 if 0.8 <= ratio <= 1.2:
-                    adj_wav = os.path.join(job_dir, f"seg_{i}_adj.wav")
+                    adj_wav = os.path.join(job_dir, f"seg_{i:04d}_adj.wav")
                     subprocess.run([
-                        "ffmpeg", "-y", "-i", raw_wav,
-                        "-af", f"atempo={ratio:.5f}",
+                        "ffmpeg", "-y", "-i", wav_file,
+                        "-filter:a", f"atempo={ratio:.5f}",
+                        "-ar", "24000", "-ac", "1",
                         adj_wav
                     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     final_wav = adj_wav
                 elif actual_dur < target_dur:
-                    adj_wav = os.path.join(job_dir, f"seg_{i}_adj.wav")
+                    adj_wav = os.path.join(job_dir, f"seg_{i:04d}_pad.wav")
                     subprocess.run([
-                        "ffmpeg", "-y", "-i", raw_wav,
+                        "ffmpeg", "-y", "-i", wav_file,
                         "-af", f"apad=whole_dur={target_dur:.3f}",
+                        "-ar", "24000", "-ac", "1",
                         adj_wav
                     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     final_wav = adj_wav
                 else:
-                    # actual_dur > target_dur, trim
-                    adj_wav = os.path.join(job_dir, f"seg_{i}_adj.wav")
+                    adj_wav = os.path.join(job_dir, f"seg_{i:04d}_trim.wav")
                     subprocess.run([
-                        "ffmpeg", "-y", "-i", raw_wav,
+                        "ffmpeg", "-y", "-i", wav_file,
                         "-t", f"{target_dur:.3f}",
+                        "-ar", "24000", "-ac", "1",
                         adj_wav
                     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     final_wav = adj_wav
 
-            seg_audio_files.append({"path": final_wav, "start": start})
+            seg_wavs.append((start, final_wav))
 
-        # Mix all audios
-        if not seg_audio_files:
-            mixed_audio = base_audio
+        # ---- সব অডিও মিক্স করা ----
+        if not seg_wavs:
+            mixed_audio = silent_wav
         else:
+            inputs = ["-i", silent_wav]
+            for start, wav in seg_wavs:
+                inputs += ["-i", wav]
+
             filter_parts = []
-            inputs = ["-i", base_audio]
-            for idx, sf in enumerate(seg_audio_files):
-                inputs += ["-i", sf["path"]]
-                delay_ms = int(sf["start"] * 1000)
-                filter_parts.append(f"[{idx+1}]adelay={delay_ms}|{delay_ms},aresample=async=1000[a{idx}]")
-            mixed_labels = "[0]" + "".join(f"[a{i}]" for i in range(len(seg_audio_files)))
-            filter_parts.append(f"{mixed_labels}amix=inputs={len(seg_audio_files)+1}:duration=longest:normalize=0[aout]")
-            filter_str = ";".join(filter_parts)
+            for idx, (start, wav) in enumerate(seg_wavs):
+                delay_ms = int(round(start * 1000))
+                filter_parts.append(f"[{idx+1}]adelay={delay_ms}|{delay_ms}[a{idx}]")
 
+            all_inputs = ["[0]"] + [f"[a{i}]" for i in range(len(seg_wavs))]
+            filter_parts.append(f"{''.join(all_inputs)}amix=inputs={len(seg_wavs)+1}:duration=longest:normalize=0[aout]")
+
+            filter_complex = ";".join(filter_parts)
             mixed_audio = os.path.join(job_dir, "mixed.wav")
-            subprocess.run(
-                ["ffmpeg", "-y"] + inputs +
-                ["-filter_complex", filter_str, "-map", "[aout]", "-ar", "24000", "-ac", "2", mixed_audio],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            cmd = ["ffmpeg", "-y"] + inputs + [
+                "-filter_complex", filter_complex, "-map", "[aout]",
+                "-ar", "24000", "-ac", "2", mixed_audio
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # Final video + audio
+        # ---- ভিডিও + অডিও এনকোড ----
         out_path = os.path.join(job_dir, "dubbed.mp4")
         subprocess.run([
             "ffmpeg", "-y",
@@ -870,6 +871,14 @@ def dub():
             "-map", "0:v:0", "-map", "1:a:0",
             "-shortest", out_path
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # নিশ্চিত হওয়া যে অডিও ট্র্যাক আছে
+        check = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_streams", out_path],
+            capture_output=True, text=True
+        )
+        if "codec_type=audio" not in check.stdout:
+            raise Exception("Final video missing audio track")
 
         video_serve_url = f"/dub_video/{job_id}/dubbed.mp4"
         return jsonify({"video_url": video_serve_url, "job_id": job_id})
