@@ -538,6 +538,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
 
     try:
         platform = get_platform(url)
+        strategy = "yt-dlp"
         yield sse("log", {"msg": f"🔍 Platform: {platform.upper()}"})
 
         if platform == 'kuaishou':
