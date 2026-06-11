@@ -11,7 +11,7 @@ import base64
 from pathlib import Path
 
 import httpx
-import edge_tts  # নিশ্চিত থাকতে হবে যেন ইন্সটল করা আছে
+import edge_tts
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_from_directory
 
 app = Flask(__name__)
@@ -247,7 +247,6 @@ def ytdlp_download(url: str, out_dir: str, job_log_fn=None) -> str:
         errors.append(f"[{strat['name']}] no output (exit {getattr(result,'returncode','?')})")
 
     raise ValueError(f"All strategies failed:\n" + "\n".join(errors))
-
 
 
 PHOTO_ID_RE = re.compile(r"/(?:short-video|video|photo)/([A-Za-z0-9_-]+)")
@@ -551,7 +550,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
             asyncio.run(download_video(video_url, video_path))
         else:
             yield sse("log", {"msg": f"⬇ Downloading via yt-dlp ({platform})..."})
-            def log_fn(msg): pass  # SSE এর ভেতরে yield করা যায় না, তাই silent
+            def log_fn(msg): pass
             video_path = ytdlp_download(url, work_dir, log_fn)
 
         size_mb = os.path.getsize(video_path) / 1024 / 1024
@@ -565,7 +564,6 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
         result = asyncio.run(groq_transcribe(mp3_path, groq_keys, language))
         yield sse("log", {"msg": f"✅ Transcription done! ({result.get('duration', 0):.1f}s audio)"})
 
-        # ✅ ডিফল্ট সেগমেন্ট ব্যবহার
         segments = []
         raw_segments = result.get("segments")
         if raw_segments:
@@ -576,7 +574,6 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                     "text": (seg.get("text") or "").strip(),
                 })
         else:
-            # fallback
             words = result.get("words", [])
             current_words = []
             current_start = None
@@ -627,7 +624,7 @@ def transcribe_stream(url: str, groq_keys_raw: str, language: str = "zh"):
                 pass
 
 
-# ──────────────────────── edge‑tts নির্ভরযোগ্য ফিক্স ────────────────────────
+# ──────────────────────── edge‑tts /synthesize ────────────────────────
 @app.route("/synthesize", methods=["POST"])
 def synthesize():
     data = request.get_json(force=True)
@@ -645,7 +642,6 @@ def synthesize():
         fd, mp3_path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
 
-        # edge-tts Python API — subprocess CLI বাদ, thread-safe
         async def _synth():
             comm = edge_tts.Communicate(text, voice, pitch=pitch, rate=rate)
             await comm.save(mp3_path)
@@ -688,6 +684,208 @@ def synthesize():
                     pass
 
 
+# ──────────────────────── NEW DUB (NO STRETCHING) ────────────────────────
+@app.route("/dub", methods=["POST"])
+def dub():
+    data = request.get_json(force=True)
+    video_url = data.get("video_url", "").strip()
+    segments  = data.get("segments", [])
+
+    if not video_url:
+        return jsonify({"error": "video_url required"}), 400
+    if not segments:
+        return jsonify({"error": "segments required"}), 400
+
+    job_id   = f"dub_{uuid.uuid4().hex[:8]}"
+    job_dir  = os.path.join(TEMP_DIR, job_id)
+    Path(job_dir).mkdir(parents=True, exist_ok=True)
+
+    video_path = os.path.join(job_dir, "original.mp4")
+    try:
+        platform = get_platform(video_url)
+        if platform == 'kuaishou':
+            video_dl_url, _, _ = asyncio.run(get_ks_video_url(video_url))
+            asyncio.run(download_video(video_dl_url, video_path))
+        else:
+            def noop(msg): pass
+            video_path = ytdlp_download(video_url, job_dir, noop)
+
+        # Get actual video duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", video_path],
+            capture_output=True, text=True, check=True
+        )
+        streams = json.loads(probe.stdout)["streams"]
+        audio_duration = None
+        for s in streams:
+            if s["codec_type"] == "audio":
+                audio_duration = float(s.get("duration", 0))
+                break
+        if not audio_duration:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+                capture_output=True, text=True, check=True
+            )
+            audio_duration = float(json.loads(probe.stdout)["format"]["duration"])
+        total_duration = audio_duration
+
+        # Base silent track
+        base_audio = os.path.join(job_dir, "base.wav")
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", "anullsrc=r=24000:cl=stereo",
+            "-t", f"{total_duration:.3f}", base_audio
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Process each segment
+        seg_audio_files = []
+        default_voice = "bn-IN-TanishaaNeural"
+        default_pitch = "-5Hz"
+
+        for i, seg in enumerate(segments):
+            start = float(seg["start"])
+            end   = float(seg["end"])
+            target_dur = max(0.3, end - start)
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+
+            # Calculate rate to match target duration
+            char_count = len(text)
+            normal_dur = char_count / 13.5
+            if normal_dur < 0.3:
+                normal_dur = 0.3
+            rate_factor = normal_dur / target_dur
+            rate_factor = max(0.5, min(2.0, rate_factor))
+            rate_percent = (rate_factor - 1) * 100
+            rate_str = f"{rate_percent:+.0f}%"
+
+            # Generate TTS with exact rate
+            with app.test_request_context(
+                "/synthesize",
+                method="POST",
+                json={
+                    "text": text,
+                    "voice": default_voice,
+                    "pitch": default_pitch,
+                    "rate": rate_str
+                }
+            ):
+                synth_resp = synthesize()
+                if synth_resp.status_code != 200:
+                    raise Exception(f"TTS failed for segment {i}: {synth_resp.get_data(as_text=True)}")
+                synth_data = synth_resp.json
+                pcm_b64 = synth_data["pcm_b64"]
+                sr = synth_data.get("sample_rate", 24000)
+
+            pcm_bytes = base64.b64decode(pcm_b64)
+            # Build WAV header
+            num_channels = 1
+            bits = 16
+            data_size = len(pcm_bytes)
+            byte_rate = sr * num_channels * (bits//8)
+            block_align = num_channels * (bits//8)
+            chunk_size = 36 + data_size
+            header = struct.pack(
+                "<4sI4s4sIHHIIHH4sI",
+                b"RIFF", chunk_size, b"WAVE", b"fmt ", 16, 1,
+                num_channels, sr, byte_rate, block_align, bits,
+                b"data", data_size
+            )
+            raw_wav = os.path.join(job_dir, f"seg_{i}_raw.wav")
+            with open(raw_wav, "wb") as f:
+                f.write(header + pcm_bytes)
+
+            # Verify actual duration
+            probe2 = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", raw_wav],
+                capture_output=True, text=True
+            )
+            try:
+                actual_dur = float(json.loads(probe2.stdout)["streams"][0]["duration"])
+            except:
+                actual_dur = target_dur
+
+            # Only minimal adjustment if still off by >0.1s
+            final_wav = raw_wav
+            if abs(actual_dur - target_dur) > 0.1:
+                ratio = target_dur / actual_dur
+                if 0.8 <= ratio <= 1.2:
+                    adj_wav = os.path.join(job_dir, f"seg_{i}_adj.wav")
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", raw_wav,
+                        "-af", f"atempo={ratio:.5f}",
+                        adj_wav
+                    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    final_wav = adj_wav
+                elif actual_dur < target_dur:
+                    adj_wav = os.path.join(job_dir, f"seg_{i}_adj.wav")
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", raw_wav,
+                        "-af", f"apad=whole_dur={target_dur:.3f}",
+                        adj_wav
+                    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    final_wav = adj_wav
+                else:
+                    # actual_dur > target_dur, trim
+                    adj_wav = os.path.join(job_dir, f"seg_{i}_adj.wav")
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", raw_wav,
+                        "-t", f"{target_dur:.3f}",
+                        adj_wav
+                    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    final_wav = adj_wav
+
+            seg_audio_files.append({"path": final_wav, "start": start})
+
+        # Mix all audios
+        if not seg_audio_files:
+            mixed_audio = base_audio
+        else:
+            filter_parts = []
+            inputs = ["-i", base_audio]
+            for idx, sf in enumerate(seg_audio_files):
+                inputs += ["-i", sf["path"]]
+                delay_ms = int(sf["start"] * 1000)
+                filter_parts.append(f"[{idx+1}]adelay={delay_ms}|{delay_ms},aresample=async=1000[a{idx}]")
+            mixed_labels = "[0]" + "".join(f"[a{i}]" for i in range(len(seg_audio_files)))
+            filter_parts.append(f"{mixed_labels}amix=inputs={len(seg_audio_files)+1}:duration=longest:normalize=0[aout]")
+            filter_str = ";".join(filter_parts)
+
+            mixed_audio = os.path.join(job_dir, "mixed.wav")
+            subprocess.run(
+                ["ffmpeg", "-y"] + inputs +
+                ["-filter_complex", filter_str, "-map", "[aout]", "-ar", "24000", "-ac", "2", mixed_audio],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+        # Final video + audio
+        out_path = os.path.join(job_dir, "dubbed.mp4")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", mixed_audio,
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "128k",
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-shortest", out_path
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        video_serve_url = f"/dub_video/{job_id}/dubbed.mp4"
+        return jsonify({"video_url": video_serve_url, "job_id": job_id})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/dub_video/<job_id>/<filename>")
+def serve_dub_video(job_id, filename):
+    job_dir = os.path.join(TEMP_DIR, job_id)
+    return send_from_directory(job_dir, filename)
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -712,150 +910,6 @@ def transcribe():
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@app.route("/dub", methods=["POST"])
-def dub():
-    data = request.get_json(force=True)
-    video_url = (data.get("video_url") or "").strip()
-    segments  = data.get("segments", [])
-
-    if not video_url:
-        return jsonify({"error": "video_url required"}), 400
-    if not segments:
-        return jsonify({"error": "segments required"}), 400
-
-    job_id   = f"dub_{uuid.uuid4().hex[:8]}"
-    job_dir  = os.path.join(TEMP_DIR, job_id)
-    Path(job_dir).mkdir(parents=True, exist_ok=True)
-
-    video_path = os.path.join(job_dir, "original.mp4")
-    out_path   = os.path.join(job_dir, "dubbed.mp4")
-
-    try:
-        platform = get_platform(video_url)
-        if platform == 'kuaishou':
-            video_dl_url, _, _ = asyncio.run(get_ks_video_url(video_url))
-            asyncio.run(download_video(video_dl_url, video_path))
-        else:
-            video_path = ytdlp_download(video_url, job_dir)
-
-        probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
-            capture_output=True, text=True, check=True
-        )
-        duration = float(json.loads(probe.stdout)["format"]["duration"])
-
-        base_audio = os.path.join(job_dir, "base.wav")
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "lavfi",
-            "-i", f"anullsrc=r=24000:cl=mono",
-            "-t", str(duration), base_audio
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        seg_files = []
-        for i, seg in enumerate(segments):
-            start    = float(seg["start"])
-            end      = float(seg["end"])
-            pcm_b64  = seg.get("pcm_b64", "")
-            sr       = int(seg.get("sample_rate", 24000))
-            target_dur = max(0.2, end - start)
-
-            if not pcm_b64:
-                continue
-
-            pcm_bytes = base64.b64decode(pcm_b64)
-
-            num_channels   = 1
-            bits_per_sample = 16
-            data_size      = len(pcm_bytes)
-            byte_rate      = sr * num_channels * (bits_per_sample // 8)
-            block_align    = num_channels * (bits_per_sample // 8)
-            chunk_size     = 36 + data_size
-            header = struct.pack(
-                "<4sI4s4sIHHIIHH4sI",
-                b"RIFF", chunk_size, b"WAVE", b"fmt ", 16, 1,
-                num_channels, sr, byte_rate, block_align, bits_per_sample,
-                b"data", data_size
-            )
-            raw_wav = os.path.join(job_dir, f"seg_{i}_raw.wav")
-            with open(raw_wav, "wb") as f:
-                f.write(header + pcm_bytes)
-
-            probe2 = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json",
-                 "-show_streams", raw_wav],
-                capture_output=True, text=True
-            )
-            try:
-                tts_dur = float(json.loads(probe2.stdout)["streams"][0]["duration"])
-            except Exception:
-                tts_dur = target_dur
-
-            ratio = tts_dur / target_dur
-            ratio = max(0.5, min(2.0, ratio))
-
-            atempo_filters = []
-            r = ratio
-            while r > 2.0:
-                atempo_filters.append("atempo=2.0")
-                r /= 2.0
-            while r < 0.5:
-                atempo_filters.append("atempo=0.5")
-                r /= 0.5
-            atempo_filters.append(f"atempo={r:.4f}")
-            af = ",".join(atempo_filters)
-
-            fit_wav = os.path.join(job_dir, f"seg_{i}_fit.wav")
-            subprocess.run([
-                "ffmpeg", "-y", "-i", raw_wav,
-                "-af", af, fit_wav
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            seg_files.append({"path": fit_wav, "start": start})
-
-        if seg_files:
-            filter_parts = []
-            inputs = ["-i", base_audio]
-            for idx, sf in enumerate(seg_files):
-                inputs += ["-i", sf["path"]]
-                delay_ms = int(sf["start"] * 1000)
-                filter_parts.append(f"[{idx+1}]adelay={delay_ms}|{delay_ms}[d{idx}]")
-
-            mixed_labels = "[0]" + "".join(f"[d{i}]" for i in range(len(seg_files)))
-            filter_parts.append(f"{mixed_labels}amix=inputs={len(seg_files)+1}:normalize=0[aout]")
-            filter_str = ";".join(filter_parts)
-
-            mixed_audio = os.path.join(job_dir, "mixed.wav")
-            subprocess.run(
-                ["ffmpeg", "-y"] + inputs +
-                ["-filter_complex", filter_str, "-map", "[aout]", mixed_audio],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-        else:
-            mixed_audio = base_audio
-
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", mixed_audio,
-            "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "128k",
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-shortest", out_path
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        video_serve_url = f"/dub_video/{job_id}/dubbed.mp4"
-        return jsonify({"video_url": video_serve_url, "job_id": job_id})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/dub_video/<job_id>/<filename>")
-def serve_dub_video(job_id, filename):
-    job_dir = os.path.join(TEMP_DIR, job_id)
-    return send_from_directory(job_dir, filename)
 
 
 @app.route("/health")
@@ -884,7 +938,6 @@ def setup_status():
 @app.route("/setup/config", methods=["GET"])
 def setup_config_get():
     cfg = load_config()
-    # mask sensitive
     if "VMESS_LINK" in cfg: cfg["VMESS_LINK"] = cfg["VMESS_LINK"][:20] + "…"
     return jsonify(cfg)
 
@@ -950,8 +1003,6 @@ def setup_proxy_test():
         return jsonify({"ok": ok, "ip": ip, "proxy": proxy})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
-
-
 
 
 if __name__ == "__main__":
