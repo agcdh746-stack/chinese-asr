@@ -188,15 +188,14 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
 </head>
 <body>
 <div class="container">
-  <h1>🎬 Chinese ASR</h1>
-  <p class="sub">Kuaishou video → transcript with segment timestamps</p>
+  <h1>🎬 Chinese ASR & Dubbing</h1>
+  <p class="sub">Video → transcript → auto-dub with Emotion Mimic</p>
 
   <div class="top-tabs">
     <button class="top-tab active" onclick="switchTopTab('main')">🎬 Main</button>
     <button class="top-tab" onclick="switchTopTab('setup')">⚙️ Setup</button>
   </div>
 
-  <!-- ══ MAIN TAB ══ -->
   <div id="topMain">
 
   <div class="card">
@@ -233,7 +232,8 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <div>
         <label>🎙️ TTS Provider</label>
         <select id="ttsProvider">
-          <option value="gemini">Gemini</option>
+          <option value="gemini">Gemini (Normal Client-side)</option>
+          <option value="gemini_emotion">Gemini (Emotion Mimic 🔥)</option>
           <option value="edge">Edge-TTS</option>
         </select>
       </div>
@@ -297,17 +297,14 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
     <div class="segments" id="segments"></div>
   </div>
 
-  <!-- Dubbing Card -->
   <div class="card" id="dubCard" style="display:none">
     <h2>🎙 Dubbing</h2>
 
-    <!-- Tabs -->
     <div style="display:flex;gap:8px;margin-bottom:14px">
       <button id="tabAutoBtn" class="tab-btn tab-active" onclick="dubSwitchTab('auto')">🤖 Auto Translate</button>
       <button id="tabManualBtn" class="tab-btn" onclick="dubSwitchTab('manual')">✍️ Manual SRT</button>
     </div>
 
-    <!-- Auto Translate Tab -->
     <div id="tabAuto">
       <p style="font-size:0.84rem;color:#888;margin-bottom:10px">
         Gemini বা Groq দিয়ে Chinese → Bengali auto translate করবে এবং SRT তৈরি করবে।
@@ -332,7 +329,6 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <div id="dubTranslateStatus" style="font-size:0.82rem;color:#aaa;margin-bottom:8px"></div>
     </div>
 
-    <!-- Manual SRT Tab -->
     <div id="tabManual" style="display:none">
       <p style="font-size:0.84rem;color:#888;margin-bottom:8px">
         Bengali/English SRT paste করুন — timestamp সহ:
@@ -340,10 +336,6 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <textarea id="dubSrtInput" placeholder="1&#10;00:00:00,000 --> 00:00:00,960&#10;কে প্রথমে জঙ্গল থেকে বের হবে&#10;&#10;2&#10;00:00:00,960 --> 00:00:02,580&#10;ধনী, সেনা নাকি গরিব?" style="min-height:160px;font-size:0.82rem"></textarea>
       <button class="btn-sm" onclick="dubParseSrt()" style="margin-bottom:12px">🔍 Parse SRT</button>
     </div>
-
-
-
-
 
     <div id="dubParseStatus" style="font-size:0.82rem;color:#4caf50;margin-bottom:8px"></div>
     <div id="dubSegments"></div>
@@ -356,11 +348,7 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <br>
       <a id="dubDownload" class="btn-dl" download="dubbed.mp4">⬇ Download Video</a>
     </div>
-  </div><!-- /dubCard -->
-  </div><!-- /topMain -->
-
-  <!-- ══ SETUP TAB ══ -->
-  <div id="topSetup" style="display:none">
+  </div></div><div id="topSetup" style="display:none">
     <div class="card">
       <h2>🔒 Proxy / VMess</h2>
       <label>VMess / VLess / SOCKS5 link</label>
@@ -389,11 +377,12 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
       <button class="btn-sm" onclick="setupLoadStatus()">🔄 Refresh</button>
       <pre id="setupStatusBox" style="font-size:0.78rem;color:#ccc;margin-top:8px;white-space:pre-wrap"></pre>
     </div>
-  </div><!-- /topSetup -->
-
-</div>
+  </div></div>
 
 <script>
+// 🔥 গ্লোবাল ভ্যারিয়েবল: Job ID স্টোর করার জন্য
+let currentJobId = ""; 
+
 window.onload = () => {
   document.getElementById('groqKeys').value = localStorage.getItem('groq_keys') || '';
   document.getElementById('language').value = localStorage.getItem('language') || 'zh';
@@ -487,6 +476,11 @@ function startTranscribe() {
     btn.textContent = 'Extract Transcript';
     addLog(`🎉 Done! Duration: ${(d.duration || 0).toFixed(1)}s`, 'success');
 
+    // 🔥 Job ID সেভ করে রাখা হচ্ছে ইমোশন মিমিকের জন্য
+    if (d.job_id) {
+       currentJobId = d.job_id;
+    }
+
     lastFullText = d.text || '';
     lastSegments = Array.isArray(d.segments) ? d.segments : [];
 
@@ -545,7 +539,7 @@ const DUB_KEYS_KEY = 'chinese_asr_gemini_keys';
 const DUB_GROQ_KEYS_KEY = 'chinese_asr_groq_translate_keys';
 const DUB_VOICE_KEY = 'chinese_asr_gemini_voice';
 const DUB_PROVIDER_KEY = 'chinese_asr_translate_provider';
-const DUB_GEMINI_MODEL = 'gemini-2.5-flash-preview-tts';
+const DUB_GEMINI_MODEL = 'gemini-2.5-flash-preview-tts'; // For normal TTS
 const DUB_SAMPLE_RATE = 24000;
 
 function dubSaveKeys() {
@@ -839,6 +833,7 @@ function dubParseSrt() {
 // ── TTS Functions ──────────────────────────────────────────────────────────
 let _geminiKeyIdx = 0; // global — সব segment জুড়ে rotate হবে
 
+// Client-side Normal Gemini Call
 async function dubCallGemini(text, voice, apiKey) {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${DUB_GEMINI_MODEL}:generateContent?key=${apiKey}`,
@@ -865,11 +860,12 @@ async function dubCallGemini(text, voice, apiKey) {
   return arr;
 }
 
-async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-5Hz', rate = '+12%') {
+// 🔥 Server-side TTS Call (Extra parameters for Emotion Mimic)
+async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-5Hz', rate = '+12%', extra = {}) {
   const resp = await fetch('/synthesize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice, pitch, rate })
+    body: JSON.stringify({ text, voice, pitch, rate, ...extra })
   });
   if (!resp.ok) {
     const err = await resp.json();
@@ -885,7 +881,7 @@ async function dubCallServerTTS(text, voice = 'bn-IN-TanishaaNeural', pitch = '-
 async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
   const ttsProvider = document.getElementById('ttsProvider').value;
 
-  // Edge-TTS সরাসরি select করা থাকলে Gemini skip
+  // 1. Edge-TTS সরাসরি select করা থাকলে Gemini skip
   if (ttsProvider === 'edge' || geminiKeys.length === 0) {
     document.getElementById('dubProgress').textContent =
       `🔊 TTS ${segIdx+1}/${total} (Edge-TTS): "${text.substring(0,25)}..."`;
@@ -894,8 +890,45 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
     return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', pitch, speed);
   }
 
-  // Gemini — সব key rotate করে চেষ্টা
-  const MAX_ROUNDS = 1;  // 3 থেকে 1
+  // 🔥 2. Gemini Emotion Mimic (Server-side Multimodal Routing)
+  if (ttsProvider === 'gemini_emotion') {
+    let cooldown = 6000;
+    const maxAttempts = geminiKeys.length; // ট্রাই করবে সব কী দিয়ে
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const key = geminiKeys[_geminiKeyIdx % geminiKeys.length];
+      _geminiKeyIdx++;
+      try {
+        const extra = {
+          provider: "gemini_audio",
+          gemini_key: key,
+          job_id: currentJobId,
+          start: dubParsedSegments[segIdx].start,
+          end: dubParsedSegments[segIdx].end
+        };
+        const pcm = await dubCallServerTTS(text, geminiVoice, null, null, extra);
+        document.getElementById('dubProgress').textContent = 
+          `🔊 TTS ${segIdx+1}/${total} (Emotion Mimic 🔥): "${text.substring(0,25)}..."`;
+        return pcm;
+      } catch(e) {
+        if (e.message && e.message.includes('429')) {
+          document.getElementById('dubProgress').textContent = 
+            `⏳ TTS ${segIdx+1}/${total}: key quota, trying next...`;
+          await new Promise(r => setTimeout(r, cooldown));
+        } else {
+          console.error(`Emotion TTS Failed for key`, e);
+          continue; // পরের কীতে যাবে
+        }
+      }
+    }
+    
+    // যদি সব Gemini কী ফেইল করে, Edge এ ফলব্যাক
+    document.getElementById('dubProgress').textContent = `🔊 TTS ${segIdx+1}/${total} (Edge-TTS fallback)...`;
+    return await dubCallServerTTS(text, 'bn-IN-TanishaaNeural', document.getElementById('fallbackPitch').value, document.getElementById('fallbackSpeed').value);
+  }
+
+  // 3. Normal Gemini (Client-side API call)
+  const MAX_ROUNDS = 1; 
   const maxAttempts = geminiKeys.length * MAX_ROUNDS;
   let cooldown = 6000;
 
@@ -905,17 +938,17 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
     try {
       const pcm = await dubCallGemini(text, geminiVoice, key);
       document.getElementById('dubProgress').textContent =
-        `🔊 TTS ${segIdx+1}/${total} (Gemini key#${_geminiKeyIdx % geminiKeys.length + 1} ✅): "${text.substring(0,25)}..."`;
+        `🔊 TTS ${segIdx+1}/${total} (Gemini ✅): "${text.substring(0,25)}..."`;
       return pcm;
     } catch(e) {
       if (e.code === 429) {
         document.getElementById('dubProgress').textContent =
-          `⏳ TTS ${segIdx+1}/${total}: key quota, trying next... (${attempt+1}/${maxAttempts})`;
+          `⏳ TTS ${segIdx+1}/${total}: key quota, trying next...`;
         await new Promise(r => setTimeout(r, cooldown));
-        if ((attempt + 1) % geminiKeys.length === 0) cooldown = Math.min(cooldown * 1.5, 60000);  // 5000 থেকে 60000
+        if ((attempt + 1) % geminiKeys.length === 0) cooldown = Math.min(cooldown * 1.5, 60000); 
       } else {
-    continue;
-}
+        continue;
+      }
     }
   }
 
@@ -928,7 +961,7 @@ async function getTTSSegment(text, geminiVoice, geminiKeys, segIdx, total) {
 }
 
 
-// ── Start Dubbing (Gemini ছাড়াও কাজ করে) ──────────────────────────────────
+// ── Start Dubbing ────────────────────────────────────────────────────────
 async function startDubbing() {
   const keysRaw = document.getElementById('dubGeminiKeys').value.trim();
   const voice   = document.getElementById('dubVoice').value;
@@ -961,10 +994,11 @@ async function startDubbing() {
       btn.disabled = false;
       return;
     }
-    // rate-limit delay only for Gemini
-const provider = document.getElementById('ttsProvider').value;
-const delayMs = (provider === 'gemini') ? 6000 : 200;
-await new Promise(r => setTimeout(r, delayMs));
+    
+    // rate-limit delay
+    const provider = document.getElementById('ttsProvider').value;
+    const delayMs = (provider === 'gemini' || provider === 'gemini_emotion') ? 6000 : 200;
+    await new Promise(r => setTimeout(r, delayMs));
   }
 
   if (audioSegments.length === 0) {
