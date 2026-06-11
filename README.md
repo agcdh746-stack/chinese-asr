@@ -1,7 +1,7 @@
 # 🎬 KwaiDub AI —  Video Dubbing Toolkit
 
 **Download → Transcribe → Translate → Dub (Single-Person Voice, Emotion Mimic)**  
-🔥 *Paste any video link(YouTube,Facebook,titok,Instagram,kuaishou . Get a dubbed version in Bengali/English(any language) with Gemini api and Edge tts fallback.
+🔥 *Paste any video link*(YouTube,Facebook,titok,Instagram,kuaishou . Get a dubbed version in Bengali/English(any language) with Gemini api and Edge tts fallback.
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
@@ -107,6 +107,7 @@ Get a free V2Ray node:
 
 The proxy runs inside the container and only routes yt‑dlp traffic through it.
 
+deploy it in Railway.com server.it provide free $5 Token,which is enough for this tools. creat a account with tempmail then install Railway CLI in your terminal(termux). then login bia railway login --browserless and deploy it..every month do it one time. Thats enough.  
 ---
 
 🎨 Features
