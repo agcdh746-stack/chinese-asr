@@ -17,9 +17,9 @@ YTDLP_PROXY  = os.environ.get("YTDLP_PROXY", "").strip()
 
 Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-# TTS JOB SYSTEM â€” zip à¦à¦° à¦¸à¦¬ features
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
+# TTS JOB SYSTEM — zip এর সব features
+# ═══════════════════════════════════════════════════════════════════════════
 
 JOBS_DIR  = os.path.join(TEMP_DIR, "tts_jobs")
 CACHE_DIR = os.path.join(TEMP_DIR, "tts_cache")   # SHA256 cache
@@ -33,7 +33,7 @@ GEMINI_TTS_URL_TMPL = (
     "{model}:generateContent?key={key}"
 )
 
-# â”€â”€ Job file helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Job file helpers ──────────────────────────────────────────────────────
 def _job_path(job_id):    return os.path.join(JOBS_DIR, f"{job_id}.json")
 def _seg_wav_path(job_id, idx): return os.path.join(JOBS_DIR, f"{job_id}_seg{idx}.wav")
 
@@ -51,7 +51,7 @@ def job_log(job, msg, lvl="info"):
     job["logs"].append({"t": round(time.time(), 2), "msg": msg, "lvl": lvl})
     if len(job["logs"]) > 200: job["logs"] = job["logs"][-200:]
 
-# â”€â”€ PCM â†’ WAV â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── PCM → WAV ─────────────────────────────────────────────────────────────
 def pcm_to_wav(pcm, sample_rate=24000):
     nc=1; bps=16; data_size=len(pcm)
     header = struct.pack(
@@ -62,7 +62,7 @@ def pcm_to_wav(pcm, sample_rate=24000):
     )
     return header + pcm
 
-# â”€â”€ SHA256 Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── SHA256 Cache ──────────────────────────────────────────────────────────
 def _cache_key(text, voice, language, model=None):
     data = json.dumps({"text":text,"voice":voice,"language":language,
                        "model": model or GEMINI_TTS_MODEL}, sort_keys=True)
@@ -77,7 +77,7 @@ def _cache_set(key, wav_path):
     try: shutil.copy2(wav_path, dst)
     except: pass
 
-# â”€â”€ Silence removal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Silence removal ───────────────────────────────────────────────────────
 def remove_silence(wav_path):
     fd, tmp = tempfile.mkstemp(suffix=".wav"); os.close(fd)
     try:
@@ -91,11 +91,11 @@ def remove_silence(wav_path):
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
 
-# â”€â”€ concat_close_transcripts (zip à¦à¦° à¦®à¦¤à§‹) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── concat_close_transcripts (zip এর মতো) ────────────────────────────────
 def concat_close_transcripts(segments, threshold=2.0, max_chunk_sec=15):
     """
-    BUG FIX: à¦†à¦—à§‡ MAX_DUR=120s + factor=2 â†’ à¦¸à¦¬ segments 1-à¦ merge à¦¹à¦¯à¦¼à§‡ "1/1 done"à¥¤
-    à¦à¦–à¦¨ max 15s, threshold doubling à¦¨à¦¾à¦‡à¥¤ Default-à¦ OFF (worker check à¦•à¦°à§‡)à¥¤
+    BUG FIX: আগে MAX_DUR=120s + factor=2 → সব segments 1-এ merge হয়ে "1/1 done"।
+    এখন max 15s, threshold doubling নাই। Default-এ OFF (worker check করে)।
     """
     if not segments: return []
     result = [dict(segments[0])]
@@ -110,7 +110,7 @@ def concat_close_transcripts(segments, threshold=2.0, max_chunk_sec=15):
             result.append(dict(curr))
     return result
 
-# â”€â”€ Gemini TTS (style prompt à¦¸à¦¹) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Gemini TTS (style prompt সহ) ──────────────────────────────────────────
 async def _gemini_tts_call(text, voice, api_key, language="Bengali", model=None):
     model = model or GEMINI_TTS_MODEL
     styled = (
@@ -141,7 +141,7 @@ async def _gemini_tts_call(text, voice, api_key, language="Bengali", model=None)
         if not b64: raise ValueError("Gemini returned no audio data")
         return base64.b64decode(b64)
 
-# â”€â”€ Edge-TTS fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Edge-TTS fallback ─────────────────────────────────────────────────────
 async def _edge_tts_call(text, voice="bn-IN-TanishaaNeural", pitch="-5Hz", rate="+12%"):
     fd, mp3 = tempfile.mkstemp(suffix=".mp3"); os.close(fd)
     wav = None
@@ -160,7 +160,7 @@ async def _edge_tts_call(text, voice="bn-IN-TanishaaNeural", pitch="-5Hz", rate=
                 try: os.unlink(p)
                 except: pass
 
-# â”€â”€ Gemini voice gender mapping (Edge fallback voice matching) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Gemini voice gender mapping (Edge fallback voice matching) ───────────
 GEMINI_MALE_VOICES = {"Schedar","Algenib","Charon","Fenrir","Iapetus","Orus","Achird",
                      "Alnilam","Gacrux","Achernar","Puck","Enceladus","Umbriel",
                      "Algieba","Rasalgethi","Sadaltager","Zubenelgenubi"}
@@ -178,9 +178,9 @@ def pick_edge_voice(gemini_voice, user_choice="auto"):
     return EDGE_VOICE_FEMALE
 
 
-# â”€â”€ SMART KEY POOL: per-key cooldown timer, RPM counter, healthy-first â”€â”€
+# ── SMART KEY POOL: per-key cooldown timer, RPM counter, healthy-first ──
 def _init_key_pool(job, n_keys):
-    """Job dict-à¦ key pool state initialize à¦•à¦°à§‡ (idempotent)."""
+    """Job dict-এ key pool state initialize করে (idempotent)."""
     if "key_pool" not in job or len(job.get("key_pool", [])) != n_keys:
         job["key_pool"] = [
             {"idx": i, "cooldown_until": 0.0, "rpm_count": 0,
@@ -206,13 +206,13 @@ def _pick_healthy_key(job, now):
     return healthy[0]
 
 def _next_cooldown_eta(job, now):
-    """à¦•à¦–à¦¨ à¦•à§‹à¦¨à§‹ key healthy à¦¹à¦¬à§‡ â€” à¦¸à¦¬à¦šà§‡à¦¯à¦¼à§‡ à¦•à¦¾à¦›à§‡à¦° timeà¥¤"""
+    """কখন কোনো key healthy হবে — সবচেয়ে কাছের time।"""
     pool = job["key_pool"]
     futures = [k["cooldown_until"] - now for k in pool if k["cooldown_until"] > now]
     return max(0, int(min(futures))) if futures else 0
 
 
-# â”€â”€ synthesize_segment: SMART POOL + INFINITE RETRY + KEY DELAY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── synthesize_segment: SMART POOL + INFINITE RETRY + KEY DELAY ──────────
 async def synthesize_segment(*, text, voice, language="Bengali",
                               gemini_keys, edge_pitch="-5Hz", edge_rate="+12%",
                               edge_voice="auto", gemini_only=True,
@@ -222,13 +222,13 @@ async def synthesize_segment(*, text, voice, language="Bengali",
                               rpm_limit=15):
     """
     V3 STRATEGY:
-      â€¢ Smart pool: healthy keys first, 429 à¦¹à¦¿à¦Ÿ key 5min cooldown
-      â€¢ Key-à¦à¦° à¦®à¦¾à¦à§‡ 2s delay (burst rate-limit à¦à¦¡à¦¼à¦¾à¦¨à§‹)
-      â€¢ RPM tracking (default 15/min Gemini limit)
-      â€¢ 429 â†’ à¦“à¦‡ key 300s cooldown à¦¤à§‡ à¦¯à¦¾à¦¬à§‡ â†’ à¦…à¦¨à§à¦¯ healthy key à¦šà§‡à¦·à§à¦Ÿà¦¾
-      â€¢ à¦¸à¦¬ key cooling â†’ à¦¤à¦–à¦¨ cooldown ETA wait à¦•à¦°à§‡ retry
-      â€¢ 3+ round-à¦ backup model (gemini-2.5-pro-preview-tts) alternately
-      â€¢ gemini_only=True â†’ infinite retry, never Edge
+      • Smart pool: healthy keys first, 429 হিট key 5min cooldown
+      • Key-এর মাঝে 2s delay (burst rate-limit এড়ানো)
+      • RPM tracking (default 15/min Gemini limit)
+      • 429 → ওই key 300s cooldown তে যাবে → অন্য healthy key চেষ্টা
+      • সব key cooling → তখন cooldown ETA wait করে retry
+      • 3+ round-এ backup model (gemini-2.5-pro-preview-tts) alternately
+      • gemini_only=True → infinite retry, never Edge
     """
     def _log(msg, lvl="info"):
         if job is not None: job_log(job, msg, lvl)
@@ -242,13 +242,13 @@ async def synthesize_segment(*, text, voice, language="Bengali",
             ck = _cache_key(text, voice, language, mdl)
             cached = _cache_get(ck)
             if cached:
-                _log(f"[{lbl}] ðŸ’¾ Cache hit â€” API skip", "success")
+                _log(f"[{lbl}] 💾 Cache hit — API skip", "success")
                 with open(cached,"rb") as f: wav_bytes = f.read()
                 return wav_bytes[44:], "cache"
 
-    # ---- No keys â†’ Edge (or user explicitly chose Edge) ----
+    # ---- No keys → Edge (or user explicitly chose Edge) ----
     if not gemini_keys:
-        _log(f"[{lbl}] ðŸŽ™ Edge-TTS ({ev})")
+        _log(f"[{lbl}] 🎙 Edge-TTS ({ev})")
         pcm = await _edge_tts_call(text, voice=ev, pitch=edge_pitch, rate=edge_rate)
         return pcm, f"edge({ev})"
 
@@ -266,9 +266,9 @@ async def synthesize_segment(*, text, voice, language="Bengali",
         kinfo = _pick_healthy_key(job, now)
 
         if kinfo is None:
-            # All keys in cooldown â†’ wait for the nearest one
+            # All keys in cooldown → wait for the nearest one
             eta = _next_cooldown_eta(job, now)
-            _log(f"[{lbl}] ðŸ”´ à¦¸à¦¬ {len(gemini_keys)}à¦Ÿà¦¾ key cooldown-à¦ â€” à¦ªà¦°à¦¬à¦°à§à¦¤à§€ {eta}s à¦…à¦ªà§‡à¦•à§à¦·à¦¾â€¦", "warn")
+            _log(f"[{lbl}] 🔴 সব {len(gemini_keys)}টা key cooldown-এ — পরবর্তী {eta}s অপেক্ষা…", "warn")
             # Sleep responsively
             for _ in range(max(1, eta)):
                 if job and job.get("stop_requested"): raise InterruptedError("stopped")
@@ -283,7 +283,7 @@ async def synthesize_segment(*, text, voice, language="Bengali",
 
         # Avoid trying same key twice in same round
         if ki in keys_tried_this_round:
-            # All healthy keys exhausted this round â€” small pause, new round
+            # All healthy keys exhausted this round — small pause, new round
             keys_tried_this_round.clear()
             round_num += 1
             await asyncio.sleep(0.5)
@@ -297,7 +297,7 @@ async def synthesize_segment(*, text, voice, language="Bengali",
 
         # RPM check
         kinfo["rpm_count"] += 1
-        _log(f"[{lbl}] ðŸ”‘ {klbl} ({mdl_lbl}) RPM:{kinfo['rpm_count']}/{rpm_limit} â†’ trying (r{round_num+1})...")
+        _log(f"[{lbl}] 🔑 {klbl} ({mdl_lbl}) RPM:{kinfo['rpm_count']}/{rpm_limit} → trying (r{round_num+1})...")
         kinfo["last_status"] = "trying"
         save_job(job)
 
@@ -305,7 +305,7 @@ async def synthesize_segment(*, text, voice, language="Bengali",
             pcm = await _gemini_tts_call(text, voice, key, language, model=cur_model)
             kinfo["total_ok"] += 1
             kinfo["last_status"] = "ok"
-            _log(f"[{lbl}] âœ… {klbl} OK ({mdl_lbl}) â€” total_ok:{kinfo['total_ok']}", "success")
+            _log(f"[{lbl}] ✅ {klbl} OK ({mdl_lbl}) — total_ok:{kinfo['total_ok']}", "success")
             save_job(job)
 
             # Cache save
@@ -324,13 +324,13 @@ async def synthesize_segment(*, text, voice, language="Bengali",
                 kinfo["total_429"] += 1
                 kinfo["cooldown_until"] = time.time() + cooldown_sec
                 kinfo["last_status"] = "limited"
-                _log(f"[{lbl}] â³ {klbl} â†’ 429 â†’ {cooldown_sec}s cooldown "
+                _log(f"[{lbl}] ⏳ {klbl} → 429 → {cooldown_sec}s cooldown "
                      f"(429s={kinfo['total_429']})", "warn")
             else:
                 kinfo["total_err"] += 1
                 kinfo["cooldown_until"] = time.time() + 30  # mild cooldown on HTTP error
                 kinfo["last_status"] = f"http_{code}"
-                _log(f"[{lbl}] âŒ {klbl} HTTP {code} â†’ 30s cooldown", "error")
+                _log(f"[{lbl}] ❌ {klbl} HTTP {code} → 30s cooldown", "error")
             save_job(job)
         except InterruptedError:
             raise
@@ -338,7 +338,7 @@ async def synthesize_segment(*, text, voice, language="Bengali",
             kinfo["total_err"] += 1
             kinfo["cooldown_until"] = time.time() + 15
             kinfo["last_status"] = "error"
-            _log(f"[{lbl}] âŒ {klbl} error: {str(e)[:80]} â†’ 15s cooldown", "error")
+            _log(f"[{lbl}] ❌ {klbl} error: {str(e)[:80]} → 15s cooldown", "error")
             save_job(job)
 
         # Key delay before next key (burst prevention)
@@ -346,12 +346,12 @@ async def synthesize_segment(*, text, voice, language="Bengali",
             await asyncio.sleep(key_delay_sec)
 
 
-# â”€â”€ Background Audio Ducking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Background Audio Ducking ──────────────────────────────────────────────
 def apply_ducking(video_path, dubbed_wav, out_path,
                   bg_vol="-12dB", voice_vol="2dB"):
     """
-    zip à¦à¦° merge_background_and_vocals() à¦à¦° FFmpeg versionà¥¤
-    Original audio à¦•à§‡ background à¦°à¦¾à¦–à§‡, voice à¦à¦° à¦¸à¦®à¦¯à¦¼ à¦•à¦®à¦¿à¦¯à¦¼à§‡ à¦¦à§‡à¦¯à¦¼à¥¤
+    zip এর merge_background_and_vocals() এর FFmpeg version।
+    Original audio কে background রাখে, voice এর সময় কমিয়ে দেয়।
     """
     fc = (
         f"[0:a]volume={bg_vol}[bg];"
@@ -367,7 +367,7 @@ def apply_ducking(video_path, dubbed_wav, out_path,
         "-shortest","-movflags","+faststart",out_path
     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-# â”€â”€ Background worker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Background worker ─────────────────────────────────────────────────────
 def _run_tts_job(job_id):
     job = load_job(job_id)
     if not job: return
@@ -375,7 +375,7 @@ def _run_tts_job(job_id):
     job["status"]     = "running"
     job["started_at"] = time.time()
     job["logs"]       = job.get("logs", [])
-    job_log(job, f"ðŸš€ Job à¦¶à§à¦°à§ â€” {job['total']} segments")
+    job_log(job, f"🚀 Job শুরু — {job['total']} segments")
     save_job(job)
 
     segments     = job["segments"]
@@ -405,7 +405,7 @@ def _run_tts_job(job_id):
         ]
         job["total"]       = len(segments)
         job["_concat_done"]= True
-        job_log(job, f"ðŸ”— Concat: {orig_count} â†’ {len(segments)} segments (max 15s)")
+        job_log(job, f"🔗 Concat: {orig_count} → {len(segments)} segments (max 15s)")
         save_job(job)
         segments = job["segments"]
 
@@ -416,22 +416,22 @@ def _run_tts_job(job_id):
         for i, seg in enumerate(segments):
             job = load_job(job_id)
             if job.get("stop_requested"):
-                job_log(job, "ðŸ›‘ Stopped by user", "warn")
+                job_log(job, "🛑 Stopped by user", "warn")
                 job["status"] = "stopped"; save_job(job); return
 
             wav_path = _seg_wav_path(job_id, i)
 
-            # Resume: file à¦†à¦›à§‡?
+            # Resume: file আছে?
             if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
                 seg["status"]   = "done"
                 seg["wav_path"] = wav_path
                 job["done"]     = sum(1 for s in segments if s.get("status")=="done")
-                job_log(job, f"[seg{i+1}] â­ Resume â€” file exists")
+                job_log(job, f"[seg{i+1}] ⏭ Resume — file exists")
                 save_job(job); continue
 
             seg["status"]  = "processing"
             job["current"] = i
-            job_log(job, f"[seg{i+1}/{job['total']}] ðŸ“ \"{seg['text'][:40]}...\"")
+            job_log(job, f"[seg{i+1}/{job['total']}] 📝 \"{seg['text'][:40]}...\"")
             save_job(job)
 
             try:
@@ -460,7 +460,7 @@ def _run_tts_job(job_id):
                     remove_silence(wav_path)
                     after  = os.path.getsize(wav_path)
                     if before != after:
-                        job_log(job, f"[seg{i+1}] âœ‚ï¸ Silence removed ({before//1024}â†’{after//1024}kb)")
+                        job_log(job, f"[seg{i+1}] ✂️ Silence removed ({before//1024}→{after//1024}kb)")
 
                 seg["status"]   = "done"
                 seg["wav_path"] = wav_path
@@ -468,30 +468,30 @@ def _run_tts_job(job_id):
 
             except InterruptedError:
                 job["status"] = "stopped"
-                job_log(job, "ðŸ›‘ Stopped", "warn")
+                job_log(job, "🛑 Stopped", "warn")
                 save_job(job); return
             except Exception as e:
                 seg["status"] = "error"
                 seg["error"]  = str(e)
-                job_log(job, f"[seg{i+1}] âŒ {str(e)[:80]}", "error")
+                job_log(job, f"[seg{i+1}] ❌ {str(e)[:80]}", "error")
 
             job["done"]     = sum(1 for s in segments if s.get("status")=="done")
             job["_key_idx"] = key_idx[0]
             save_job(job)
 
         job["status"] = "complete"
-        job_log(job, f"ðŸŽ‰ à¦¶à§‡à¦·! {job['done']}/{job['total']} done", "success")
+        job_log(job, f"🎉 শেষ! {job['done']}/{job['total']} done", "success")
         save_job(job)
 
     except Exception as e:
         job["status"] = "error"; job["error"] = str(e)
-        job_log(job, f"âŒ Fatal: {e}", "error")
+        job_log(job, f"❌ Fatal: {e}", "error")
         save_job(job)
     finally:
         loop.close()
 
 
-# â”€â”€ TTS Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── TTS Routes ──────────────────────────────────────────────────────────────
 @app.route("/tts/start", methods=["POST"])
 def tts_start():
     data           = request.get_json(force=True)
@@ -528,11 +528,24 @@ def tts_start():
             old_job["edge_pitch"]     = edge_pitch
             old_job["edge_rate"]      = edge_rate
             old_job["voice"]          = voice or old_job.get("voice", "Charon")
+            # KEY POOL RESET: resume-এ সব key cooldown clear করো
+            if "key_pool" in old_job:
+                for k in old_job["key_pool"]:
+                    k["cooldown_until"]    = 0.0
+                    k["rpm_count"]         = 0
+                    k["rpm_window_start"]  = time.time()
+                    k["last_status"]       = "ready"
             for s in old_job.get("segments", []):
-                if s.get("status") != "done":
+                # WAV FILE RECHECK: "done" segment এর file actually আছে কিনা verify করো
+                if s.get("status") == "done":
+                    wp = s.get("wav_path", "")
+                    if not wp or not os.path.exists(wp) or os.path.getsize(wp) <= 100:
+                        s["status"]   = "pending"
+                        s["wav_path"] = ""
+                elif s.get("status") != "done":
                     s["status"] = "pending"
             old_job["done"] = sum(1 for s in old_job["segments"] if s.get("status") == "done")
-            job_log(old_job, f"ðŸ”„ Resume â€” restart job (done={old_job['done']}/{old_job['total']})", "info")
+            job_log(old_job, f"🔄 Resume — restart job (done={old_job['done']}/{old_job['total']})", "info")
             save_job(old_job)
             threading.Thread(target=_run_tts_job, args=(resume_id,), daemon=True).start()
             return jsonify({"job_id": resume_id, "resumed": True})
@@ -578,7 +591,7 @@ def tts_stop(job_id):
     if not job:
         return jsonify({"error": "not found"}), 404
     job["stop_requested"] = True
-    job_log(job, "ðŸ›‘ Stop requested by user", "warn")
+    job_log(job, "🛑 Stop requested by user", "warn")
     save_job(job)
     return jsonify({"ok": True})
 
@@ -606,7 +619,7 @@ def tts_status(job_id):
             status = job.get("status", "")
             logs   = job.get("logs", [])
 
-            # à¦¨à¦¤à§à¦¨ log entries à¦ªà¦¾à¦ à¦¾à¦“
+            # নতুন log entries পাঠাও
             if len(logs) > last_log_len:
                 new_logs = logs[last_log_len:]
                 last_log_len = len(logs)
@@ -673,7 +686,7 @@ def tts_status(job_id):
 
 @app.route("/tts/active")
 def tts_active():
-    """List recent jobs (newest first) â€” used for page-refresh recovery."""
+    """List recent jobs (newest first) — used for page-refresh recovery."""
     out = []
     try:
         files = sorted(os.listdir(JOBS_DIR), key=lambda f: -os.path.getmtime(os.path.join(JOBS_DIR, f)))
@@ -719,9 +732,9 @@ def tts_job_delete(job_id):
     return jsonify({"ok": True})
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 # PLATFORM / PROXY / XRAY
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 
 def get_platform(url):
     if re.search(r'instagram\.com', url, re.I):             return 'instagram'
@@ -836,9 +849,9 @@ def _apply_saved_config():
 
 _apply_saved_config()
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 # YT-DLP
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 
 YT_STRATEGIES = [
     {"name": "web_embedded", "client": "web_embedded", "max_sec": 150},
@@ -914,9 +927,9 @@ def ytdlp_download(url, out_dir, job_log_fn=None):
 
     raise ValueError("All strategies failed:\n" + "\n".join(errors))
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 # KUAISHOU
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 
 PHOTO_ID_RE = re.compile(r"/(?:short-video|video|photo)/([A-Za-z0-9_-]+)")
 
@@ -1034,9 +1047,9 @@ async def download_video(video_url, out_path):
                 async for chunk in resp.aiter_bytes(1024*64):
                     f.write(chunk)
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 # ASR
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 
 def extract_audio(video_path, mp3_path):
     subprocess.run(
@@ -1115,26 +1128,26 @@ def transcribe_stream(url, groq_keys_raw, language="zh"):
     try:
         platform = get_platform(url)
         strategy = "yt-dlp"
-        yield sse("log",{"msg":f"ðŸ” Platform: {platform.upper()}"})
+        yield sse("log",{"msg":f"🔍 Platform: {platform.upper()}"})
         if platform=='kuaishou':
-            yield sse("log",{"msg":"â³ Getting Kuaishou video URL..."})
+            yield sse("log",{"msg":"⏳ Getting Kuaishou video URL..."})
             video_url,meta,strategy = asyncio.run(get_ks_video_url(url))
             caption=(meta or {}).get("caption") or (meta or {}).get("photoId") or "Kuaishou"
-            yield sse("log",{"msg":f"âœ… Video URL found via {strategy}"})
-            yield sse("log",{"msg":f"ðŸŽ¬ Source: {caption}"})
-            yield sse("log",{"msg":"â¬‡ Downloading video..."})
+            yield sse("log",{"msg":f"✅ Video URL found via {strategy}"})
+            yield sse("log",{"msg":f"🎬 Source: {caption}"})
+            yield sse("log",{"msg":"⬇ Downloading video..."})
             asyncio.run(download_video(video_url, video_path))
         else:
-            yield sse("log",{"msg":f"â¬‡ Downloading via yt-dlp ({platform})..."})
+            yield sse("log",{"msg":f"⬇ Downloading via yt-dlp ({platform})..."})
             video_path = ytdlp_download(url, work_dir)
         size_mb = os.path.getsize(video_path)/1024/1024
-        yield sse("log",{"msg":f"âœ… Downloaded ({size_mb:.1f} MB)"})
-        yield sse("log",{"msg":"ðŸ”Š Extracting audio..."})
+        yield sse("log",{"msg":f"✅ Downloaded ({size_mb:.1f} MB)"})
+        yield sse("log",{"msg":"🔊 Extracting audio..."})
         extract_audio(video_path, mp3_path)
-        yield sse("log",{"msg":"âœ… Audio extracted"})
-        yield sse("log",{"msg":f"ðŸ¤– Sending to Groq Whisper ({language})..."})
+        yield sse("log",{"msg":"✅ Audio extracted"})
+        yield sse("log",{"msg":f"🤖 Sending to Groq Whisper ({language})..."})
         result = asyncio.run(groq_transcribe(mp3_path, groq_keys, language))
-        yield sse("log",{"msg":f"âœ… Transcription done! ({result.get('duration',0):.1f}s)"})
+        yield sse("log",{"msg":f"✅ Transcription done! ({result.get('duration',0):.1f}s)"})
 
         segments = []
         raw_segments = result.get("segments")
@@ -1150,7 +1163,7 @@ def transcribe_stream(url, groq_keys_raw, language="zh"):
                 if not word_text: continue
                 if current_start is None: current_start=w["start"]
                 current_words.append(word_text)
-                if word_text[-1] in 'à¥¤.?!\n':
+                if word_text[-1] in '।.?!\n':
                     joined="".join(current_words) if has_chinese(word_text) else " ".join(current_words)
                     segments.append({"start":round(current_start,3),"end":round(w["end"],3),"text":joined})
                     current_words=[]; current_start=None
@@ -1168,9 +1181,9 @@ def transcribe_stream(url, groq_keys_raw, language="zh"):
         try: os.unlink(video_path)
         except: pass
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 # FLASK ROUTES
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═══════════════════════════════════════════════════════════════════════════
 
 @app.route("/")
 def index():
@@ -1363,7 +1376,7 @@ def setup_status():
 @app.route("/setup/config",methods=["GET"])
 def setup_config_get():
     cfg=load_config()
-    if "VMESS_LINK" in cfg: cfg["VMESS_LINK"]=cfg["VMESS_LINK"][:20]+"â€¦"
+    if "VMESS_LINK" in cfg: cfg["VMESS_LINK"]=cfg["VMESS_LINK"][:20]+"…"
     return jsonify(cfg)
 
 @app.route("/setup/config",methods=["POST"])
