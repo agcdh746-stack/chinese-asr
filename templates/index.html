@@ -73,6 +73,7 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
 .key-badge.ok{border-color:#4caf50;color:#4caf50;background:#001a00}
 .key-badge.limited{border-color:#ff6b6b;color:#ff6b6b;background:#1a0000}
 .key-badge.cooldown{border-color:#888;color:#aaa;background:#111}
+.key-badge.dead{border-color:#666;color:#666;background:#1a1a1a;text-decoration:line-through}
 
 /* Stop button */
 #dubStopBtn{display:none;padding:12px;background:#7f1d1d;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600;margin-top:8px;width:100%}
@@ -392,19 +393,28 @@ function _reattachSSE(jobId, logFrom) {
       progress.textContent=`🔊 TTS: ${d.done}/${d.total} (${pct}%) [reattached]`;
     } catch(_){}
   });
-  es.addEventListener('done', e=>{
-    try {
-      const d=JSON.parse(e.data);
-      if (d.status === 'stopped') {
-        progress.textContent='🛑 Job stopped — Resume চাপুন';
-        document.getElementById('dubResumeBtn').style.display='inline-block';
-      } else if (d.status === 'complete') {
-        progress.textContent=`✅ Complete — Resume চেপে video build চালাও`;
-        document.getElementById('dubResumeBtn').style.display='inline-block';
-      }
-    } catch(_){}
+  es.addEventListener('done', async e=>{
+    let data = null;
+    try { data = JSON.parse(e.data); } catch(_) {}
     es.close();
     document.getElementById('dubStopBtn').style.display='none';
+    if (!data) return;
+
+    if (data.status === 'stopped') {
+      progress.textContent = '🛑 Job stopped — Resume চাপুন';
+      document.getElementById('dubResumeBtn').style.display = 'inline-block';
+    } else if (data.status === 'complete') {
+      const okN = (data.results || []).filter(r => r.pcm_b64).length;
+      const total = (data.results || []).length;
+      if (okN === total && total > 0) {
+        // ✅ AUTO-BUILD on refresh-recovered complete job
+        addTtsLog([{t:Date.now()/1000, msg:`🎬 Auto-build trigger (refresh-recovered, ${okN}/${total})`, lvl:'success'}]);
+        await _runVideoBuild(data.results);
+      } else {
+        progress.textContent = `⚠️ Complete কিন্তু ${total-okN}/${total} fail — Resume চাপুন`;
+        document.getElementById('dubResumeBtn').style.display = 'inline-block';
+      }
+    }
   });
   es.addEventListener('error', e=>{
     addTtsLog([{t:Date.now()/1000, msg:'⚠️ SSE re-attach error', lvl:'warn'}]);
@@ -466,9 +476,10 @@ function addTtsLog(entries) {
     const m = e.msg.match(/key#(\d+)/);
     if (m) {
       const kn = parseInt(m[1]);
-      if (e.msg.includes('trying'))      setKeyBadge(kn, 'trying');
-      else if (e.msg.includes('✅'))     setKeyBadge(kn, 'ok');
-      else if (e.msg.includes('429'))    setKeyBadge(kn, 'limited');
+      if (e.msg.includes('💀') || e.msg.includes('permanently'))   setKeyBadge(kn, 'dead');
+      else if (e.msg.includes('trying'))                            setKeyBadge(kn, 'trying');
+      else if (e.msg.includes('✅') || e.msg.includes('OK'))       setKeyBadge(kn, 'ok');
+      else if (e.msg.includes('429'))                               setKeyBadge(kn, 'limited');
       else if (e.msg.includes('cooldown') || e.msg.includes('Cooldown')) setKeyBadge(kn, 'cooldown');
     }
     // সব key limited cooldown বার্তা
@@ -686,7 +697,7 @@ async function startDubbing(resumeMode=false) {
     es.addEventListener('progress',e=>{
       const d=JSON.parse(e.data);
       const pct=d.total?Math.round(d.done/d.total*100):0;
-      const preview=d.seg_text?`"${d.seg_text}..."` :'';
+      const preview=d.seg_text?`"${d.seg_text.slice(0,30)}..."` :'';
       progress.textContent=`🔊 TTS: ${d.done}/${d.total} (${pct}%) ${preview}`;
     });
 
@@ -712,46 +723,56 @@ async function startDubbing(resumeMode=false) {
 
   if (_jobStoppedFlag) { _dubReset(); return; }
 
+  // Auto video build (single source of truth)
+  await _runVideoBuild(ttsResults);
+  _dubReset();
+}
+
+async function _runVideoBuild(ttsResults) {
+  // Common path: every segment must have pcm_b64. If any missing, refuse.
+  const progress = document.getElementById('dubProgress');
+  const videoUrl = document.getElementById('urlInput').value.trim();
+  const useDucking = document.getElementById('duckingToggle')?.checked ?? false;
   if (!ttsResults || !ttsResults.length) {
-    progress.textContent='❌ TTS কোনো result আসেনি';
-    _dubReset(); return;
+    progress.textContent = '❌ TTS কোনো result আসেনি';
+    return false;
   }
-
-  const okSegs=ttsResults.filter(r=>r.pcm_b64);
+  const okSegs = ttsResults.filter(r => r.pcm_b64);
   const failedCount = ttsResults.length - okSegs.length;
-  // STRICT RULE: কোনো segment skip করা যাবে না — fail থাকলে video build হবে না
   if (failedCount > 0) {
-    progress.textContent=`⚠️ ${failedCount}/${ttsResults.length} segment fail। Resume চাপুন — Video build হবে না যতক্ষণ সব success না হয়।`;
-    document.getElementById('dubResumeBtn').style.display='inline-block';
-    addTtsLog([{t:Date.now()/1000, msg:`🚫 ${failedCount} segment fail — video build skip। Resume চেপে retry করুন।`, lvl:'error'}]);
-    _dubReset(); return;
+    progress.textContent = `⚠️ ${failedCount}/${ttsResults.length} segment-এ audio নাই। Resume চাপুন।`;
+    document.getElementById('dubResumeBtn').style.display = 'inline-block';
+    addTtsLog([{t:Date.now()/1000, msg:`🚫 ${failedCount} segment missing audio — video build skip`, lvl:'error'}]);
+    return false;
   }
-  progress.textContent=`✅ সব ${okSegs.length}/${ttsResults.length} segment OK। Video বানাচ্ছে...`;
-
+  progress.textContent = `✅ সব ${okSegs.length}/${ttsResults.length} segment OK। Video বানাচ্ছে...`;
   try {
-    if (!okSegs.length) throw new Error('কোনো audio segment নেই');
-    const resp=await fetch('/dub',{
+    const resp = await fetch('/dub', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        video_url:videoUrl,
-        segments:okSegs.map(r=>({start:r.start,end:r.end,pcm_b64:r.pcm_b64,sample_rate:24000})),
+      body: JSON.stringify({
+        video_url: videoUrl,
+        segments: okSegs.map(r=>({start:r.start,end:r.end,pcm_b64:r.pcm_b64,sample_rate:24000})),
         ducking: useDucking,
       }),
     });
-    if (!resp.ok){const err=await resp.json();throw new Error(err.error||`HTTP ${resp.status}`);}
-    const result=await resp.json();
-    progress.textContent='✅ Done! Video ready।';
-    const videoEl=document.getElementById('dubVideo');
-    videoEl.src=result.video_url;
-    document.getElementById('dubDownload').href=result.video_url;
-    document.getElementById('dubVideoWrap').style.display='block';
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    const result = await resp.json();
+    progress.textContent = '✅ Done! Video ready.';
+    const videoEl = document.getElementById('dubVideo');
+    videoEl.src = result.video_url;
+    document.getElementById('dubDownload').href = result.video_url;
+    document.getElementById('dubVideoWrap').style.display = 'block';
     videoEl.load();
-    saveTtsJobId('');
+    saveTtsJobId('');   // clear only on successful build
+    return true;
   } catch(e) {
-    progress.textContent='❌ Video error: '+e.message;
+    progress.textContent = '❌ Video error: ' + e.message;
+    addTtsLog([{t:Date.now()/1000, msg:'❌ /dub failed: '+e.message, lvl:'error'}]);
+    return false;
   }
-
-  _dubReset();
 }
 
 function _dubReset(){
