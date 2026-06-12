@@ -59,7 +59,7 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
 /* TTS Live Log Panel */
 #ttsLogPanel{display:none;margin-top:12px}
 #ttsLogPanel h3{font-size:.8rem;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
-#ttsLogBox{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:14px;font-family:monospace;font-size:.8rem;min-height:260px;max-height:520px;overflow-y:auto;line-height:1.65;resize:vertical}
+#ttsLogBox{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:14px;font-family:monospace;font-size:.8rem;min-height:280px;max-height:560px;overflow-y:auto;line-height:1.65;resize:vertical}
 .tlog{padding:1px 0}
 .tlog.info{color:#888}
 .tlog.success{color:#4caf50}
@@ -126,6 +126,12 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
           <option value="gemini">Gemini</option>
           <option value="edge">Edge-TTS</option>
         </select>
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;color:#aaa;cursor:pointer;margin-bottom:8px">
+          <input type="checkbox" id="geminiOnly" checked style="width:auto;margin:0">
+          <span>♾️ Gemini-only (Edge-এ যাবে না, infinite retry)</span>
+        </label>
       </div>
     </div>
     <div class="row" style="margin-bottom:0">
@@ -245,8 +251,8 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
     <div id="dubOptions" style="display:none;margin-top:12px;background:#111;border-radius:8px;padding:12px;border:1px solid #222">
       <div style="font-size:.8rem;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">⚙ Dubbing Options</div>
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
-        <input type="checkbox" id="concatToggle" checked style="width:auto;margin:0">
-        <span style="font-size:.85rem;color:#aaa">🔗 Concat close segments (zip feature — natural pause)</span>
+        <input type="checkbox" id="concatToggle" style="width:auto;margin:0">
+        <span style="font-size:.85rem;color:#aaa">🔗 Concat close segments (max 15s — default OFF, individual segments better)</span>
       </label>
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:0;cursor:pointer">
         <input type="checkbox" id="duckingToggle" style="width:auto;margin:0">
@@ -439,7 +445,8 @@ function saveSettings() {
   localStorage.setItem(DUB_PROVIDER_KEY,  document.getElementById('dubTranslateProvider').value);
   localStorage.setItem('fallback_pitch',  document.getElementById('fallbackPitch').value);
   localStorage.setItem('fallback_speed',  document.getElementById('fallbackSpeed').value);
-  localStorage.setItem('edge_voice',      document.getElementById('edgeVoice').value);
+  if (document.getElementById('edgeVoice'))  localStorage.setItem('edge_voice',  document.getElementById('edgeVoice').value);
+  if (document.getElementById('geminiOnly')) localStorage.setItem('gemini_only', document.getElementById('geminiOnly').checked?'1':'0');
   const msg = document.getElementById('saveMsg');
   msg.textContent = '✅ Saved!';
   setTimeout(() => msg.textContent = '', 2000);
@@ -461,7 +468,9 @@ function dubLoadKeys() {
   const speed = localStorage.getItem('fallback_speed');
   if (speed) document.getElementById('fallbackSpeed').value = speed;
   const ev = localStorage.getItem('edge_voice');
-  if (ev) document.getElementById('edgeVoice').value = ev;
+  if (ev && document.getElementById('edgeVoice')) document.getElementById('edgeVoice').value = ev;
+  const go = localStorage.getItem('gemini_only');
+  if (go !== null && document.getElementById('geminiOnly')) document.getElementById('geminiOnly').checked = (go === '1');
 }
 
 // ══════════════════════════════════════════════
@@ -557,7 +566,9 @@ async function startDubbing(resumeMode=false) {
   const pitch   = document.getElementById('fallbackPitch').value;
   const speed   = document.getElementById('fallbackSpeed').value;
   const ttsProv = document.getElementById('ttsProvider').value;
-  const edgeVc  = document.getElementById('edgeVoice').value;
+  const edgeVc  = document.getElementById('edgeVoice') ? document.getElementById('edgeVoice').value : 'auto';
+  const geminiOnly = document.getElementById('geminiOnly') ? document.getElementById('geminiOnly').checked : true;
+  const useConcat  = document.getElementById('concatToggle') ? document.getElementById('concatToggle').checked : false;
   _jobStoppedFlag = false;
 
   if (!videoUrl)                          { alert('Video URL নেই'); return; }
@@ -591,6 +602,8 @@ async function startDubbing(resumeMode=false) {
         edge_pitch:pitch, edge_rate:speed,
         edge_voice: edgeVc,
         tts_provider: ttsProv,
+        gemini_only: geminiOnly,
+        concat_segments: useConcat,
         remove_silence: true,
         resume_id: resumeMode ? getSavedJobId() : '',
       }),
@@ -628,7 +641,7 @@ async function startDubbing(resumeMode=false) {
       ttsResults=d.results;
       if(d.status==='stopped'){
         _jobStoppedFlag = true;
-        progress.textContent='🛑 Stopped — Resume দিয়ে আবার শুরু করতে পারো';
+        progress.textContent='🛑 Stopped — Resume চাপুন আবার শুরু করতে';
         document.getElementById('dubResumeBtn').style.display='inline-block';
       }
       es.close(); resolve();
@@ -643,7 +656,6 @@ async function startDubbing(resumeMode=false) {
 
   document.getElementById('dubStopBtn').style.display='none';
 
-  // Stop হলে video build skip
   if (_jobStoppedFlag) { _dubReset(); return; }
 
   if (!ttsResults || !ttsResults.length) {
@@ -654,9 +666,9 @@ async function startDubbing(resumeMode=false) {
   const okSegs=ttsResults.filter(r=>r.pcm_b64);
   const failedCount = ttsResults.length - okSegs.length;
   if (failedCount > 0) {
-    const proceed = confirm(`⚠️ ${failedCount}/${ttsResults.length} segment fail হয়েছে।\n\nOK = Partial video বানাও (${okSegs.length} segment)\nCancel = Resume দিয়ে ফেলডগুলো retry করো`);
+    const proceed = confirm(`⚠️ ${failedCount}/${ttsResults.length} segment fail হয়েছে।\n\nOK = Partial video বানাও\nCancel = Resume চেপে ফেলড segment retry করো`);
     if (!proceed) {
-      progress.textContent=`⏸ থামানো হলো (${okSegs.length}/${ttsResults.length}) — Resume চাপো`;
+      progress.textContent=`⏸ থামানো (${okSegs.length}/${ttsResults.length}) — Resume চাপো`;
       document.getElementById('dubResumeBtn').style.display='inline-block';
       _dubReset(); return;
     }
@@ -698,7 +710,7 @@ async function stopDubbing(){
     document.getElementById('dubProgress').textContent='ℹ️ কোনো active job নেই';
     return;
   }
-  document.getElementById('dubProgress').textContent='🛑 Stop করা হচ্ছে... (চলতি segment শেষ হলে thamb)';
+  document.getElementById('dubProgress').textContent='🛑 Stop করা হচ্ছে... (cooldown চললে পরমিনিটে ছাড়বে)';
   try {
     const r = await fetch(`/tts/stop/${currentJobId}`,{method:'POST'});
     if (!r.ok) throw new Error('HTTP '+r.status);
