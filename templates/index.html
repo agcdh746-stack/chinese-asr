@@ -1,189 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Chinese ASR</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: system-ui, sans-serif;
-  background: #0d0d0d;
-  color: #e0e0e0;
-  min-height: 100vh;
-  padding: 24px 16px;
-}
-.container { max-width: 760px; margin: 0 auto; }
-.top-tabs { display: flex; gap: 0; border-bottom: 2px solid #2a2a2a; margin-bottom: 20px; }
-.top-tab {
-  padding: 10px 22px; background: none; border: none;
-  color: #777; font-size: 0.92rem; cursor: pointer; border-bottom: 2px solid transparent;
-  margin-bottom: -2px; font-weight: 500;
-}
-.top-tab:hover { color: #ccc; }
-.top-tab.active { color: #fff; border-bottom-color: #e63946; }
-h1 { font-size: 1.6rem; color: #fff; margin-bottom: 4px; }
-.sub { font-size: 0.9rem; color: #7b7b7b; margin-bottom: 24px; }
-.card {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 16px;
-}
-.card h2 {
-  font-size: 0.82rem;
-  color: #8f8f8f;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-bottom: 12px;
-}
-label {
-  font-size: 0.85rem;
-  color: #a9a9a9;
-  display: block;
-  margin-bottom: 6px;
-}
-input[type="text"],
-input[type="password"],
-textarea,
-select {
-  width: 100%;
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid #333;
-  background: #111;
-  color: #fff;
-  font-size: 0.92rem;
-  margin-bottom: 12px;
-  outline: none;
-}
-textarea { resize: vertical; min-height: 88px; }
-input:focus, textarea:focus, select:focus { border-color: #555; }
-.row { display: grid; grid-template-columns: 1fr 180px; gap: 12px; }
-button#submitBtn {
-  width: 100%;
-  padding: 12px;
-  background: #e63946;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font-size: 1rem;
-  cursor: pointer;
-  font-weight: 600;
-}
-button#submitBtn:hover { background: #c1121f; }
-button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; }
-.btn-sm {
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid #333;
-  background: #222;
-  color: #ccc;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.btn-sm:hover { background: #2a2a2a; }
-.hint {
-  font-size: 0.8rem;
-  color: #7f7f7f;
-  margin-top: -4px;
-  margin-bottom: 12px;
-  line-height: 1.5;
-}
-.log-box {
-  background: #0a0a0a;
-  border: 1px solid #222;
-  border-radius: 8px;
-  padding: 14px;
-  font-family: monospace;
-  font-size: 0.82rem;
-  min-height: 90px;
-  max-height: 220px;
-  overflow-y: auto;
-  display: none;
-}
-.log-line { padding: 2px 0; color: #aaa; }
-.log-line.success { color: #4caf50; }
-.log-line.error { color: #ff6b6b; }
-.result-card { display: none; }
-.meta {
-  font-size: 0.84rem;
-  color: #999;
-  margin-bottom: 12px;
-}
-.full-text {
-  font-size: 1.03rem;
-  line-height: 1.8;
-  color: #fff;
-  word-break: break-word;
-  margin-bottom: 16px;
-  padding: 14px;
-  background: #111;
-  border-radius: 8px;
-  white-space: pre-wrap;
-}
-.segments { margin-top: 12px; }
-.seg {
-  display: flex;
-  gap: 12px;
-  padding: 8px 0;
-  border-bottom: 1px solid #222;
-  font-size: 0.9rem;
-}
-.seg:last-child { border-bottom: none; }
-.seg .ts {
-  color: #e63946;
-  font-family: monospace;
-  font-size: 0.8rem;
-  min-width: 120px;
-  padding-top: 2px;
-}
-.seg .txt { color: #ddd; line-height: 1.6; }
-.btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-@media (max-width: 640px) {
-  .row { grid-template-columns: 1fr; }
-  .seg { flex-direction: column; gap: 4px; }
-  .seg .ts { min-width: auto; }
-}
-/* Dubbing */
-.dub-seg {
-  display: flex; gap: 10px; padding: 8px 0;
-  border-bottom: 1px solid #222; align-items: flex-start;
-}
-.dub-seg:last-child { border-bottom: none; }
-.dub-seg .ts {
-  color: #e63946; font-family: monospace; font-size: 0.78rem;
-  min-width: 110px; padding-top: 8px;
-}
-.dub-seg .orig { color: #777; font-size: 0.82rem; flex: 1; padding-top: 8px; line-height: 1.5; }
-.dub-seg textarea {
-  flex: 1.5; min-height: 52px; font-size: 0.88rem;
-  padding: 6px 10px; margin-bottom: 0; resize: vertical;
-}
-.dub-progress {
-  font-size: 0.84rem; color: #aaa; margin: 10px 0; min-height: 20px;
-}
-.btn-dub {
-  width: 100%; padding: 12px; background: #2d6a4f;
-  color: #fff; border: none; border-radius: 8px;
-  font-size: 1rem; cursor: pointer; font-weight: 600; margin-top: 8px;
-}
-.btn-dub:hover { background: #1b4332; }
-.btn-dub:disabled { background: #333; color: #666; cursor: not-allowed; }
-#dubVideoWrap { display: none; margin-top: 16px; }
-#dubVideoWrap video { width: 100%; border-radius: 8px; background: #000; }
-.tab-btn {
-  padding: 8px 16px; border-radius: 6px; border: 1px solid #333;
-  background: #1a1a1a; color: #aaa; font-size: 0.85rem; cursor: pointer;
-}
-.tab-active { background: #2d6a4f; color: #fff; border-color: #2d6a4f; }
-.btn-dl {
-  display: inline-block; margin-top: 10px; padding: 10px 20px;
-  background: #1d3557; color: #fff; border-radius: 8px;
-  text-decoration: none; font-size: 0.9rem; font-weight: 600;
-}
-.btn-dl:hover { background: #457b9d; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0d0d0d;color:#e0e0e0;min-height:100vh;padding:24px 16px}
+.container{max-width:760px;margin:0 auto}
+.top-tabs{display:flex;gap:0;border-bottom:2px solid #2a2a2a;margin-bottom:20px}
+.top-tab{padding:10px 22px;background:none;border:none;color:#777;font-size:.92rem;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;font-weight:500}
+.top-tab:hover{color:#ccc}
+.top-tab.active{color:#fff;border-bottom-color:#e63946}
+h1{font-size:1.6rem;color:#fff;margin-bottom:4px}
+.sub{font-size:.9rem;color:#7b7b7b;margin-bottom:24px}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{font-size:.82rem;color:#8f8f8f;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+label{font-size:.85rem;color:#a9a9a9;display:block;margin-bottom:6px}
+input[type=text],textarea,select{width:100%;padding:10px 14px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;font-size:.92rem;margin-bottom:12px;outline:none}
+textarea{resize:vertical;min-height:88px}
+input:focus,textarea:focus,select:focus{border-color:#555}
+.row{display:grid;grid-template-columns:1fr 180px;gap:12px}
+button#submitBtn{width:100%;padding:12px;background:#e63946;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600}
+button#submitBtn:hover{background:#c1121f}
+button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
+.btn-sm{padding:8px 14px;border-radius:6px;border:1px solid #333;background:#222;color:#ccc;font-size:.82rem;cursor:pointer}
+.btn-sm:hover{background:#2a2a2a}
+.hint{font-size:.8rem;color:#7f7f7f;margin-top:-4px;margin-bottom:12px;line-height:1.5}
+.log-box{background:#0a0a0a;border:1px solid #222;border-radius:8px;padding:14px;font-family:monospace;font-size:.82rem;min-height:90px;max-height:220px;overflow-y:auto;display:none}
+.log-line{padding:2px 0;color:#aaa}
+.log-line.success{color:#4caf50}
+.log-line.error{color:#ff6b6b}
+.result-card{display:none}
+.meta{font-size:.84rem;color:#999;margin-bottom:12px}
+.full-text{font-size:1.03rem;line-height:1.8;color:#fff;word-break:break-word;margin-bottom:16px;padding:14px;background:#111;border-radius:8px;white-space:pre-wrap}
+.segments{margin-top:12px}
+.seg{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid #222;font-size:.9rem}
+.seg:last-child{border-bottom:none}
+.seg .ts{color:#e63946;font-family:monospace;font-size:.8rem;min-width:120px;padding-top:2px}
+.seg .txt{color:#ddd;line-height:1.6}
+.btn-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+@media(max-width:640px){.row{grid-template-columns:1fr}.seg{flex-direction:column;gap:4px}.seg .ts{min-width:auto}}
+.dub-seg{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #222;align-items:flex-start}
+.dub-seg:last-child{border-bottom:none}
+.dub-seg .ts{color:#e63946;font-family:monospace;font-size:.78rem;min-width:110px;padding-top:8px}
+.dub-seg .orig{color:#777;font-size:.82rem;flex:1;padding-top:8px;line-height:1.5}
+.dub-progress{font-size:.84rem;color:#aaa;margin:10px 0;min-height:20px}
+.btn-dub{width:100%;padding:12px;background:#2d6a4f;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600;margin-top:8px}
+.btn-dub:hover{background:#1b4332}
+.btn-dub:disabled{background:#333;color:#666;cursor:not-allowed}
+#dubVideoWrap{display:none;margin-top:16px}
+#dubVideoWrap video{width:100%;border-radius:8px;background:#000}
+.tab-btn{padding:8px 16px;border-radius:6px;border:1px solid #333;background:#1a1a1a;color:#aaa;font-size:.85rem;cursor:pointer}
+.tab-active{background:#2d6a4f;color:#fff;border-color:#2d6a4f}
+.btn-dl{display:inline-block;margin-top:10px;padding:10px 20px;background:#1d3557;color:#fff;border-radius:8px;text-decoration:none;font-size:.9rem;font-weight:600}
+.btn-dl:hover{background:#457b9d}
+
+/* TTS Live Log Panel */
+#ttsLogPanel{display:none;margin-top:12px}
+#ttsLogPanel h3{font-size:.8rem;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+#ttsLogBox{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px;font-family:monospace;font-size:.78rem;max-height:260px;overflow-y:auto;line-height:1.6}
+.tlog{padding:1px 0}
+.tlog.info{color:#888}
+.tlog.success{color:#4caf50}
+.tlog.warn{color:#f4a261}
+.tlog.error{color:#ff6b6b}
+
+/* Key status badges */
+#keyStatusRow{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.key-badge{font-size:.72rem;padding:3px 8px;border-radius:12px;border:1px solid #333;background:#111;color:#777;font-family:monospace}
+.key-badge.trying{border-color:#f4a261;color:#f4a261;background:#1a1200}
+.key-badge.ok{border-color:#4caf50;color:#4caf50;background:#001a00}
+.key-badge.limited{border-color:#ff6b6b;color:#ff6b6b;background:#1a0000}
+.key-badge.cooldown{border-color:#888;color:#aaa;background:#111}
+
+/* Stop button */
+#dubStopBtn{display:none;padding:12px;background:#7f1d1d;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600;margin-top:8px;width:100%}
+#dubStopBtn:hover{background:#991b1b}
 </style>
 </head>
 <body>
@@ -196,15 +89,12 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
     <button class="top-tab" onclick="switchTopTab('setup')">⚙️ Setup</button>
   </div>
 
-  <!-- ══ MAIN TAB ══ -->
   <div id="topMain">
-
   <div class="card">
     <h2>⚙ Settings</h2>
     <label>Groq API Keys</label>
     <textarea id="groqKeys" placeholder="gsk_xxx&#10;gsk_yyy&#10;gsk_zzz"></textarea>
-    <div class="hint">একটা বা একাধিক key দিতে পারো। newline বা comma দিয়ে আলাদা করো। quota/rate limit হলে next key try করবে.</div>
-
+    <div class="hint">একটা বা একাধিক key — newline বা comma দিয়ে আলাদা করো।</div>
     <div class="row">
       <div>
         <label>Language</label>
@@ -219,14 +109,14 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
         <button onclick="saveSettings()" class="btn-sm" style="width:100%">💾 Save</button>
       </div>
     </div>
-    <div id="saveMsg" style="font-size:0.82rem;color:#4caf50"></div>
+    <div id="saveMsg" style="font-size:.82rem;color:#4caf50"></div>
 
     <hr style="border:none;border-top:1px solid #2a2a2a;margin:14px 0">
 
-    <label>Gemini API Keys <span style="font-size:12px;color:#666">(TTS, optional — না দিলে Edge‑TTS)</span></label>
+    <label>Gemini API Keys <span style="font-size:12px;color:#666">(TTS — না দিলে Edge‑TTS)</span></label>
     <textarea id="dubGeminiKeys" placeholder="AIza...&#10;AIza..." style="min-height:70px"></textarea>
 
-    <label style="margin-top:4px">Groq API Keys <span style="font-size:12px;color:#666">(Translation এর জন্য — Gemini এর বিকল্প)</span></label>
+    <label style="margin-top:4px">Groq API Keys <span style="font-size:12px;color:#666">(Translation)</span></label>
     <textarea id="dubGroqKeys" placeholder="gsk_xxx&#10;gsk_yyy" style="min-height:60px"></textarea>
 
     <div class="row" style="margin-bottom:8px">
@@ -238,7 +128,6 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
         </select>
       </div>
     </div>
-
     <div class="row" style="margin-bottom:0">
       <div>
         <label>Voice (Gemini)</label>
@@ -260,7 +149,7 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
         <select id="fallbackPitch">
           <option value="-5Hz" selected>-5Hz (মাঝারি ভারী)</option>
           <option value="+0Hz">+0Hz (স্বাভাবিক)</option>
-          <option value="+5%">+5% (চড়া)</option>
+          <option value="+5%">+5% (চড়া)</option>
         </select>
       </div>
       <div>
@@ -272,12 +161,12 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
         </select>
       </div>
     </div>
-    <div id="dubKeysStatus" style="font-size:0.82rem;color:#4caf50;margin-top:4px"></div>
+    <div id="dubKeysStatus" style="font-size:.82rem;color:#4caf50;margin-top:4px"></div>
   </div>
 
   <div class="card">
     <h2>🔗 Video URL</h2>
-    <input type="text" id="urlInput" placeholder="YouTube / TikTok / Instagram / Kuaishou URL" />
+    <input type="text" id="urlInput" placeholder="YouTube / TikTok / Instagram / Kuaishou URL"/>
     <button id="submitBtn" onclick="startTranscribe()">Extract Transcript</button>
   </div>
 
@@ -301,17 +190,13 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
   <div class="card" id="dubCard" style="display:none">
     <h2>🎙 Dubbing</h2>
 
-    <!-- Tabs -->
     <div style="display:flex;gap:8px;margin-bottom:14px">
       <button id="tabAutoBtn" class="tab-btn tab-active" onclick="dubSwitchTab('auto')">🤖 Auto Translate</button>
       <button id="tabManualBtn" class="tab-btn" onclick="dubSwitchTab('manual')">✍️ Manual SRT</button>
     </div>
 
-    <!-- Auto Translate Tab -->
     <div id="tabAuto">
-      <p style="font-size:0.84rem;color:#888;margin-bottom:10px">
-        Gemini বা Groq দিয়ে Chinese → Bengali auto translate করবে এবং SRT তৈরি করবে।
-      </p>
+      <p style="font-size:.84rem;color:#888;margin-bottom:10px">Gemini বা Groq দিয়ে Chinese → Bengali auto translate করবে।</p>
       <div class="row" style="margin-bottom:8px">
         <div>
           <label>Target Language</label>
@@ -328,35 +213,61 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
           </select>
         </div>
       </div>
-      <button class="btn-dub" onclick="dubAutoTranslate()" id="dubTranslateBtn" style="padding:10px;font-size:0.9rem;margin-bottom:8px">🌐 Translate</button>
-      <div id="dubTranslateStatus" style="font-size:0.82rem;color:#aaa;margin-bottom:8px"></div>
+      <button class="btn-dub" onclick="dubAutoTranslate()" id="dubTranslateBtn" style="padding:10px;font-size:.9rem;margin-bottom:8px">🌐 Translate</button>
+      <div id="dubTranslateStatus" style="font-size:.82rem;color:#aaa;margin-bottom:8px"></div>
     </div>
 
-    <!-- Manual SRT Tab -->
     <div id="tabManual" style="display:none">
-      <p style="font-size:0.84rem;color:#888;margin-bottom:8px">
-        Bengali/English SRT paste করুন — timestamp সহ:
-      </p>
-      <textarea id="dubSrtInput" placeholder="1&#10;00:00:00,000 --> 00:00:00,960&#10;কে প্রথমে জঙ্গল থেকে বের হবে&#10;&#10;2&#10;00:00:00,960 --> 00:00:02,580&#10;ধনী, সেনা নাকি গরিব?" style="min-height:160px;font-size:0.82rem"></textarea>
+      <p style="font-size:.84rem;color:#888;margin-bottom:8px">Bengali/English SRT paste করুন:</p>
+      <textarea id="dubSrtInput" placeholder="1&#10;00:00:00,000 --> 00:00:00,960&#10;কে প্রথমে জঙ্গল থেকে বের হবে" style="min-height:160px;font-size:.82rem"></textarea>
       <button class="btn-sm" onclick="dubParseSrt()" style="margin-bottom:12px">🔍 Parse SRT</button>
     </div>
 
-    <div id="dubParseStatus" style="font-size:0.82rem;color:#4caf50;margin-bottom:8px"></div>
+    <div id="dubParseStatus" style="font-size:.82rem;color:#4caf50;margin-bottom:8px"></div>
     <div id="dubSegments"></div>
 
-    <button class="btn-dub" id="dubBtn" onclick="startDubbing()" style="display:none;margin-top:12px">🎬 Generate Dubbed Video</button>
-    <button class="btn-sm" id="dubResumeBtn" onclick="resumeDubbing()" style="display:none;margin-top:12px;background:#1d3557">🔄 Resume আগের Job</button>
+    <!-- Dubbing Options -->
+    <div id="dubOptions" style="display:none;margin-top:12px;background:#111;border-radius:8px;padding:12px;border:1px solid #222">
+      <div style="font-size:.8rem;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">⚙ Dubbing Options</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="concatToggle" checked style="width:auto;margin:0">
+        <span style="font-size:.85rem;color:#aaa">🔗 Concat close segments (zip feature — natural pause)</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:0;cursor:pointer">
+        <input type="checkbox" id="duckingToggle" style="width:auto;margin:0">
+        <span style="font-size:.85rem;color:#aaa">🎚 Background Audio Ducking (original audio কমিয়ে voice মেশায়)</span>
+      </label>
+    </div>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn-dub" id="dubBtn" onclick="startDubbing(false)" style="display:none;flex:1">🎬 Generate Dubbed Video</button>
+      <button id="dubStopBtn" onclick="stopDubbing()" style="flex:0 0 auto;display:none;padding:12px 20px;background:#7f1d1d;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600">🛑 Stop</button>
+    </div>
+    <button class="btn-sm" id="dubResumeBtn" onclick="startDubbing(true)" style="display:none;margin-top:8px;background:#1d3557;border-color:#1d3557;color:#fff">🔄 Resume আগের Job</button>
+
     <div class="dub-progress" id="dubProgress"></div>
+
+    <!-- TTS Live Log -->
+    <div id="ttsLogPanel">
+      <h3>
+        <span>📡 TTS Live Log</span>
+        <button class="btn-sm" onclick="document.getElementById('ttsLogBox').innerHTML=''" style="font-size:.7rem;padding:2px 8px">Clear</button>
+      </h3>
+      <!-- Key status badges -->
+      <div id="keyStatusRow"></div>
+      <div id="ttsLogBox"></div>
+    </div>
 
     <div id="dubVideoWrap">
       <video id="dubVideo" controls style="width:100%;border-radius:8px;background:#000;margin-top:12px"></video>
       <br>
       <a id="dubDownload" class="btn-dl" download="dubbed.mp4">⬇ Download Video</a>
     </div>
-  </div><!-- /dubCard -->
+  </div>
   </div><!-- /topMain -->
 
-  <!-- ══ SETUP TAB ══ -->
+  <!-- SETUP TAB -->
   <div id="topSetup" style="display:none">
     <div class="card">
       <h2>🔒 Proxy / VMess</h2>
@@ -367,647 +278,569 @@ button#submitBtn:disabled { background: #333; color: #666; cursor: not-allowed; 
         <button class="btn-sm" onclick="setupTestProxy()">🧪 Test Proxy</button>
         <button class="btn-sm" style="background:#7f1d1d" onclick="setupClearProxy()">🗑 Clear</button>
       </div>
-      <div id="setupProxyStatus" style="font-size:0.8rem;margin-top:8px;color:#4caf50"></div>
+      <div id="setupProxyStatus" style="font-size:.8rem;margin-top:8px;color:#4caf50"></div>
     </div>
-
     <div class="card">
       <h2>🍪 YouTube Cookies</h2>
-      <label>cookies.txt (Netscape format)</label>
-      <textarea id="setupCookies" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com ..." style="min-height:120px;font-size:0.82rem"></textarea>
+      <textarea id="setupCookies" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com ..." style="min-height:120px;font-size:.82rem"></textarea>
       <div style="display:flex;gap:8px">
         <button class="btn-sm" onclick="setupSaveCookies()">💾 Save Cookies</button>
         <button class="btn-sm" style="background:#7f1d1d" onclick="setupDeleteCookies()">🗑 Delete</button>
       </div>
-      <div id="setupCookieStatus" style="font-size:0.8rem;margin-top:8px;color:#4caf50"></div>
+      <div id="setupCookieStatus" style="font-size:.8rem;margin-top:8px;color:#4caf50"></div>
     </div>
-
     <div class="card">
       <h2>📊 Status</h2>
       <button class="btn-sm" onclick="setupLoadStatus()">🔄 Refresh</button>
-      <pre id="setupStatusBox" style="font-size:0.78rem;color:#ccc;margin-top:8px;white-space:pre-wrap"></pre>
+      <pre id="setupStatusBox" style="font-size:.78rem;color:#ccc;margin-top:8px;white-space:pre-wrap"></pre>
     </div>
-  </div><!-- /topSetup -->
-
+  </div>
 </div>
 
 <script>
-// ── Job state (localStorage তে save হয় — refresh করলেও থাকে) ──────────────
-const TTS_JOB_KEY = 'chinese_asr_tts_job_id';
+// ══════════════════════════════════════════════
+// Constants & State
+// ══════════════════════════════════════════════
+const TTS_JOB_KEY       = 'chinese_asr_tts_job_id';
+const DUB_KEYS_KEY      = 'chinese_asr_gemini_keys';
+const DUB_GROQ_KEYS_KEY = 'chinese_asr_groq_translate_keys';
+const DUB_VOICE_KEY     = 'chinese_asr_gemini_voice';
+const DUB_PROVIDER_KEY  = 'chinese_asr_translate_provider';
 
-function saveTtsJobId(id) {
-  if (id) localStorage.setItem(TTS_JOB_KEY, id);
-  else localStorage.removeItem(TTS_JOB_KEY);
-}
-function getSavedJobId() {
-  return localStorage.getItem(TTS_JOB_KEY) || '';
-}
+let lastSegments      = [];
+let lastFullText      = '';
+let dubParsedSegments = [];
+let currentJobId      = null;
+let _keyBadges        = {};   // key_num → badge element
 
-// ── Page load: আগের job আছে কিনা + পুরনো সেটিংস লোড ─────────────────────
-window.addEventListener('load', async () => {
-  // পুরনো সেটিংস লোড
+// ══════════════════════════════════════════════
+// Page load
+// ══════════════════════════════════════════════
+window.onload = async () => {
   document.getElementById('groqKeys').value = localStorage.getItem('groq_keys') || '';
   document.getElementById('language').value = localStorage.getItem('language') || 'zh';
   dubLoadKeys();
 
-  // Resume job check
   const savedId = getSavedJobId();
   if (savedId) {
     try {
       const r = await fetch(`/tts/job/${savedId}`);
       if (r.ok) {
         const job = await r.json();
-        if (job.status === 'complete' || job.status === 'running' || job.status === 'pending') {
+        if (['pending','running','complete'].includes(job.status)) {
           document.getElementById('dubProgress').textContent =
-            `🔄 আগের job পাওয়া গেছে (${job.done}/${job.total} done) — Resume করতে পারো`;
+            `🔄 আগের job পাওয়া গেছে (${job.done}/${job.total}) — Resume করতে পারো`;
           document.getElementById('dubResumeBtn').style.display = 'inline-block';
+          document.getElementById('dubCard').style.display = 'block';
         }
       }
     } catch(e) {}
   }
-});
+};
 
-// ── Helper: uint8 → base64 ──────────────────────────────────────────────────
-function uint8ToBase64(arr) {
-  let binary = '';
-  const chunkSize = 8192;
-  for (let i = 0; i < arr.length; i += chunkSize)
-    binary += String.fromCharCode(...arr.subarray(i, i + chunkSize));
-  return btoa(binary);
+// ══════════════════════════════════════════════
+// Job ID helpers
+// ══════════════════════════════════════════════
+function saveTtsJobId(id) {
+  if (id) localStorage.setItem(TTS_JOB_KEY, id);
+  else    localStorage.removeItem(TTS_JOB_KEY);
+}
+function getSavedJobId() { return localStorage.getItem(TTS_JOB_KEY) || ''; }
+
+// ══════════════════════════════════════════════
+// Key badge helpers
+// ══════════════════════════════════════════════
+function initKeyBadges(geminiKeys) {
+  const row = document.getElementById('keyStatusRow');
+  row.innerHTML = '';
+  _keyBadges = {};
+  if (!geminiKeys.length) return;
+  geminiKeys.forEach((_, i) => {
+    const b = document.createElement('span');
+    b.className = 'key-badge';
+    b.id        = `kbadge_${i+1}`;
+    b.textContent = `key#${i+1}`;
+    row.appendChild(b);
+    _keyBadges[i+1] = b;
+  });
 }
 
-// ── Start Dubbing  (server-side job) ────────────────────────────────────────
-async function startDubbing(resumeMode = false) {
-  const keysRaw   = document.getElementById('dubGeminiKeys').value.trim();
-  const voice     = document.getElementById('dubVoice').value;
-  const videoUrl  = document.getElementById('urlInput').value.trim();
-  const progress  = document.getElementById('dubProgress');
-  const btn       = document.getElementById('dubBtn');
-  const pitch     = document.getElementById('fallbackPitch').value;
-  const speed     = document.getElementById('fallbackSpeed').value;
+function setKeyBadge(keyNum, state, extra='') {
+  const b = _keyBadges[keyNum];
+  if (!b) return;
+  b.className = `key-badge ${state}`;
+  const icons = {trying:'⏳', ok:'✅', limited:'🔴', cooldown:'⏱'};
+  b.textContent = `${icons[state]||''} key#${keyNum}${extra}`;
+}
 
-  if (!videoUrl)             { alert('Video URL নেই'); return; }
-  if (!dubParsedSegments.length) { alert('আগে SRT parse করুন'); return; }
+// ══════════════════════════════════════════════
+// TTS Live Log
+// ══════════════════════════════════════════════
+function addTtsLog(entries) {
+  const box = document.getElementById('ttsLogBox');
+  const atBottom = box.scrollHeight - box.clientHeight <= box.scrollTop + 10;
 
-  const geminiKeys = keysRaw
-    ? keysRaw.split('\n').map(k => k.trim()).filter(Boolean)
-    : [];
+  entries.forEach(e => {
+    const line = document.createElement('div');
+    line.className = `tlog ${e.lvl || 'info'}`;
+    const t = new Date(e.t * 1000).toLocaleTimeString();
+    line.textContent = `[${t}] ${e.msg}`;
+    box.appendChild(line);
 
-  const segments = dubParsedSegments
-    .filter(s => s.text)
-    .map(s => ({ start: s.start, end: s.end, text: s.text }));
-
-  if (!segments.length) { alert('কমপক্ষে একটা translation দিন'); return; }
-
-  btn.disabled = true;
-  document.getElementById('dubResumeBtn').style.display = 'none';
-  document.getElementById('dubVideoWrap').style.display = 'none';
-
-  // ── Job শুরু ──────────────────────────────────────────────────────────────
-  progress.textContent = '⏳ Server এ TTS job শুরু হচ্ছে...';
-
-  let jobId;
-  try {
-    const r = await fetch('/tts/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        segments,
-        gemini_keys: geminiKeys,
-        voice,
-        edge_pitch:  pitch,
-        edge_rate:   speed,
-        resume_id:   resumeMode ? getSavedJobId() : '',
-      }),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    jobId = d.job_id;
-    saveTtsJobId(jobId);
-    if (d.resumed) progress.textContent = '🔄 আগের job resume হচ্ছে...';
-  } catch(e) {
-    progress.textContent = '❌ Job start error: ' + e.message;
-    btn.disabled = false;
-    return;
-  }
-
-  // ── SSE দিয়ে progress দেখো ──────────────────────────────────────────────
-  let ttsResults = null;
-
-  await new Promise((resolve) => {
-    const es = new EventSource(`/tts/status/${jobId}`);
-
-    es.addEventListener('progress', e => {
-      const d = JSON.parse(e.data);
-      const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
-      const preview = d.seg_text ? `"${d.seg_text}..."` : '';
-      progress.textContent =
-        `🔊 TTS: ${d.done}/${d.total} (${pct}%) ${preview}`;
-    });
-
-    es.addEventListener('done', e => {
-      const d = JSON.parse(e.data);
-      ttsResults = d.results;
-      es.close();
-      resolve();
-    });
-
-    es.addEventListener('error', e => {
-      try {
-        const d = JSON.parse(e.data);
-        progress.textContent = '❌ ' + d.msg;
-      } catch {
-        progress.textContent = '❌ SSE connection error';
-      }
-      es.close();
-      resolve();
-    });
+    // key badge update from log message
+    const m = e.msg.match(/key#(\d+)/);
+    if (m) {
+      const kn = parseInt(m[1]);
+      if (e.msg.includes('trying'))      setKeyBadge(kn, 'trying');
+      else if (e.msg.includes('✅'))     setKeyBadge(kn, 'ok');
+      else if (e.msg.includes('429'))    setKeyBadge(kn, 'limited');
+      else if (e.msg.includes('cooldown') || e.msg.includes('Cooldown')) setKeyBadge(kn, 'cooldown');
+    }
+    // সব key limited cooldown বার্তা
+    if (e.msg.includes('সব key rate limited')) {
+      Object.keys(_keyBadges).forEach(kn => setKeyBadge(parseInt(kn), 'cooldown'));
+    }
+    // cooldown শেষ
+    if (e.msg.includes('আবার চেষ্টা')) {
+      Object.keys(_keyBadges).forEach(kn => setKeyBadge(parseInt(kn), 'trying'));
+    }
   });
 
-  if (!ttsResults || !ttsResults.length) {
-    progress.textContent = '❌ TTS কোনো result আসেনি';
-    btn.disabled = false;
-    return;
-  }
-
-  // ── /dub এ পাঠাও ─────────────────────────────────────────────
-  progress.textContent = `✅ TTS শেষ (${ttsResults.filter(r=>r.pcm_b64).length}/${ttsResults.length})। Video বানাচ্ছে...`;
-
-  try {
-    const payload = {
-      video_url: videoUrl,
-      segments: ttsResults
-        .filter(r => r.pcm_b64)
-        .map(r => ({
-          start:       r.start,
-          end:         r.end,
-          pcm_b64:     r.pcm_b64,
-          sample_rate: 24000,
-        })),
-    };
-
-    if (!payload.segments.length) throw new Error('কোনো audio segment নেই');
-
-    const resp = await fetch('/dub', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.error || `HTTP ${resp.status}`);
-    }
-
-    const result = await resp.json();
-    progress.textContent = '✅ Done! Video ready।';
-
-    const videoEl = document.getElementById('dubVideo');
-    const dlLink  = document.getElementById('dubDownload');
-    videoEl.src = result.video_url;
-    dlLink.href = result.video_url;
-    document.getElementById('dubVideoWrap').style.display = 'block';
-    videoEl.load();
-
-    saveTtsJobId('');  // job শেষ
-  } catch(e) {
-    progress.textContent = '❌ Video error: ' + e.message;
-  }
-
-  btn.disabled = false;
+  if (atBottom) box.scrollTop = box.scrollHeight;
+  // max 300 lines রাখো
+  while (box.children.length > 300) box.removeChild(box.firstChild);
 }
 
-// Resume button handler
-async function resumeDubbing() {
-  await startDubbing(true);
-}
-
-// ── বাকি সব পুরনো ফাংশন (startTranscribe, dubAutoTranslate, dubParseSrt, setup...) নিচে ──
-
+// ══════════════════════════════════════════════
+// Settings
+// ══════════════════════════════════════════════
 function saveSettings() {
-  localStorage.setItem('groq_keys', document.getElementById('groqKeys').value.trim());
-  localStorage.setItem('language', document.getElementById('language').value);
-  localStorage.setItem(DUB_KEYS_KEY, document.getElementById('dubGeminiKeys').value.trim());
-  localStorage.setItem('tts_provider', document.getElementById('ttsProvider').value);
-  localStorage.setItem(DUB_VOICE_KEY, document.getElementById('dubVoice').value);
+  localStorage.setItem('groq_keys',       document.getElementById('groqKeys').value.trim());
+  localStorage.setItem('language',        document.getElementById('language').value);
+  localStorage.setItem(DUB_KEYS_KEY,      document.getElementById('dubGeminiKeys').value.trim());
+  localStorage.setItem('tts_provider',    document.getElementById('ttsProvider').value);
+  localStorage.setItem(DUB_VOICE_KEY,     document.getElementById('dubVoice').value);
   localStorage.setItem(DUB_GROQ_KEYS_KEY, document.getElementById('dubGroqKeys').value.trim());
-  localStorage.setItem(DUB_PROVIDER_KEY, document.getElementById('dubTranslateProvider').value);
-  localStorage.setItem('fallback_pitch', document.getElementById('fallbackPitch').value);
-  localStorage.setItem('fallback_speed', document.getElementById('fallbackSpeed').value);
+  localStorage.setItem(DUB_PROVIDER_KEY,  document.getElementById('dubTranslateProvider').value);
+  localStorage.setItem('fallback_pitch',  document.getElementById('fallbackPitch').value);
+  localStorage.setItem('fallback_speed',  document.getElementById('fallbackSpeed').value);
   const msg = document.getElementById('saveMsg');
   msg.textContent = '✅ Saved!';
   setTimeout(() => msg.textContent = '', 2000);
 }
 
-function addLog(msg, type='') {
-  const box = document.getElementById('logBox');
-  const line = document.createElement('div');
-  line.className = 'log-line ' + type;
-  const ts = new Date().toLocaleTimeString();
-  line.textContent = `[${ts}] ${msg}`;
-  box.appendChild(line);
-  box.scrollTop = box.scrollHeight;
-}
-
-function fmtTime(sec) {
-  const totalMs = Math.max(0, Math.round((Number(sec) || 0) * 1000));
-  const h = Math.floor(totalMs / 3600000);
-  const m = Math.floor((totalMs % 3600000) / 60000);
-  const s = Math.floor((totalMs % 60000) / 1000);
-  const ms = totalMs % 1000;
-  if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
-  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
-}
-
-function srtTime(sec) {
-  const totalMs = Math.max(0, Math.round((Number(sec) || 0) * 1000));
-  const h = Math.floor(totalMs / 3600000);
-  const m = Math.floor((totalMs % 3600000) / 60000);
-  const s = Math.floor((totalMs % 60000) / 1000);
-  const ms = totalMs % 1000;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
-}
-
-let lastSegments = [];
-let lastFullText = '';
-
-function startTranscribe() {
-  const url = document.getElementById('urlInput').value.trim();
-  const groqKeys = document.getElementById('groqKeys').value.trim();
-  const language = document.getElementById('language').value;
-
-  if (!url) return alert('URL দাও');
-  if (!groqKeys) return alert('Groq API key দাও');
-
-  localStorage.setItem('groq_keys', groqKeys);
-  localStorage.setItem('language', language);
-
-  const btn = document.getElementById('submitBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Processing...';
-
-  document.getElementById('logCard').style.display = 'block';
-  document.getElementById('logBox').style.display = 'block';
-  document.getElementById('logBox').innerHTML = '';
-  document.getElementById('resultCard').style.display = 'none';
-  document.getElementById('segments').innerHTML = '';
-  document.getElementById('metaInfo').textContent = '';
-  lastSegments = [];
-  lastFullText = '';
-
-  const params = new URLSearchParams({ url, groq_keys: groqKeys, language });
-  const es = new EventSource(`/transcribe?${params}`);
-
-  es.addEventListener('log', e => {
-    const d = JSON.parse(e.data);
-    const isSuccess = d.msg.startsWith('✅');
-    addLog(d.msg, isSuccess ? 'success' : '');
-  });
-
-  es.addEventListener('done', e => {
-    const d = JSON.parse(e.data);
-    es.close();
-    btn.disabled = false;
-    btn.textContent = 'Extract Transcript';
-    addLog(`🎉 Done! Duration: ${(d.duration || 0).toFixed(1)}s`, 'success');
-
-    lastFullText = d.text || '';
-    lastSegments = Array.isArray(d.segments) ? d.segments : [];
-
-    document.getElementById('fullText').textContent = lastFullText;
-    document.getElementById('metaInfo').textContent = `Strategy: ${d.strategy || '-'} | Language: ${d.language || '-'}`;
-    document.getElementById('resultCard').style.display = 'block';
-
-    const segBox = document.getElementById('segments');
-    segBox.innerHTML = '';
-    for (const seg of lastSegments) {
-      const div = document.createElement('div');
-      div.className = 'seg';
-      div.innerHTML = `
-        <span class="ts">${fmtTime(seg.start)} → ${fmtTime(seg.end)}</span>
-        <span class="txt"></span>
-      `;
-      div.querySelector('.txt').textContent = seg.text || '';
-      segBox.appendChild(div);
-    }
-
-    buildDubSegments(lastSegments);
-    document.getElementById('dubCard').style.display = 'block';
-    dubLoadKeys();
-  });
-
-  es.addEventListener('error', e => {
-    try {
-      const d = JSON.parse(e.data);
-      addLog('❌ Error: ' + d.msg, 'error');
-    } catch {
-      addLog('❌ Connection error', 'error');
-    }
-    es.close();
-    btn.disabled = false;
-    btn.textContent = 'Extract Transcript';
-  });
-}
-
-function copyFull() {
-  navigator.clipboard.writeText(lastFullText || '');
-  alert('Copied!');
-}
-
-function copySRT() {
-  let srt = '';
-  lastSegments.forEach((seg, idx) => {
-    srt += `${idx + 1}\n${srtTime(seg.start)} --> ${srtTime(seg.end)}\n${(seg.text || '').trim()}\n\n`;
-  });
-  navigator.clipboard.writeText(srt.trim());
-  alert('SRT copied!');
-}
-
-// ── Dubbing ──────────────────────────────────────────────────────────────────
-const DUB_KEYS_KEY = 'chinese_asr_gemini_keys';
-const DUB_GROQ_KEYS_KEY = 'chinese_asr_groq_translate_keys';
-const DUB_VOICE_KEY = 'chinese_asr_gemini_voice';
-const DUB_PROVIDER_KEY = 'chinese_asr_translate_provider';
-const DUB_GEMINI_MODEL = 'gemini-2.5-flash-preview-tts';
-const DUB_SAMPLE_RATE = 24000;
-
-function dubSaveKeys() {
-  const keys = document.getElementById('dubGeminiKeys').value.trim();
-  const voice = document.getElementById('dubVoice').value;
-  const groqKeys = document.getElementById('dubGroqKeys').value.trim();
-  localStorage.setItem(DUB_KEYS_KEY, keys);
-  localStorage.setItem(DUB_VOICE_KEY, voice);
-  localStorage.setItem(DUB_GROQ_KEYS_KEY, groqKeys);
-  const count = keys.split('\n').filter(k => k.trim()).length;
-  document.getElementById('dubKeysStatus').textContent = `✅ ${count}টা Gemini key saved`;
-  setTimeout(() => document.getElementById('dubKeysStatus').textContent = '', 2000);
-}
-
 function dubLoadKeys() {
   const saved = localStorage.getItem(DUB_KEYS_KEY);
   if (saved) document.getElementById('dubGeminiKeys').value = saved;
-  const ttsProvider = localStorage.getItem('tts_provider');
-  if (ttsProvider) document.getElementById('ttsProvider').value = ttsProvider;
-  const voice = localStorage.getItem(DUB_VOICE_KEY);
-  if (voice) document.getElementById('dubVoice').value = voice;
-  const groqSaved = localStorage.getItem(DUB_GROQ_KEYS_KEY);
-  if (groqSaved) document.getElementById('dubGroqKeys').value = groqSaved;
-  const translateProvider = localStorage.getItem(DUB_PROVIDER_KEY);
-  if (translateProvider) document.getElementById('dubTranslateProvider').value = translateProvider;
+  const p = localStorage.getItem('tts_provider');
+  if (p) document.getElementById('ttsProvider').value = p;
+  const v = localStorage.getItem(DUB_VOICE_KEY);
+  if (v) document.getElementById('dubVoice').value = v;
+  const g = localStorage.getItem(DUB_GROQ_KEYS_KEY);
+  if (g) document.getElementById('dubGroqKeys').value = g;
+  const tp = localStorage.getItem(DUB_PROVIDER_KEY);
+  if (tp) document.getElementById('dubTranslateProvider').value = tp;
   const pitch = localStorage.getItem('fallback_pitch');
   if (pitch) document.getElementById('fallbackPitch').value = pitch;
   const speed = localStorage.getItem('fallback_speed');
   if (speed) document.getElementById('fallbackSpeed').value = speed;
 }
 
-function buildDubSegments(segs) {
-  document.getElementById('dubCard').style.display = 'block';
-  dubLoadKeys();
+// ══════════════════════════════════════════════
+// Log helpers (transcribe)
+// ══════════════════════════════════════════════
+function addLog(msg, type='') {
+  const box  = document.getElementById('logBox');
+  const line = document.createElement('div');
+  line.className   = `log-line ${type}`;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
 }
 
-let dubParsedSegments = [];
+function fmtTime(sec) {
+  const ms=Math.max(0,Math.round((Number(sec)||0)*1000));
+  const h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000);
+  const s=Math.floor((ms%60000)/1000),ms2=ms%1000;
+  if(h>0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms2).padStart(3,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms2).padStart(3,'0')}`;
+}
+function srtTime(sec) {
+  const ms=Math.max(0,Math.round((Number(sec)||0)*1000));
+  const h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000);
+  const s=Math.floor((ms%60000)/1000),ms2=ms%1000;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms2).padStart(3,'0')}`;
+}
 
-function switchTopTab(tab) {
-  document.getElementById('topMain').style.display  = tab === 'main'  ? '' : 'none';
-  document.getElementById('topSetup').style.display = tab === 'setup' ? '' : 'none';
-  document.querySelectorAll('.top-tab').forEach((b, i) => {
-    b.classList.toggle('active', (tab === 'main' && i === 0) || (tab === 'setup' && i === 1));
+// ══════════════════════════════════════════════
+// Transcribe
+// ══════════════════════════════════════════════
+function startTranscribe() {
+  const url=document.getElementById('urlInput').value.trim();
+  const groqKeys=document.getElementById('groqKeys').value.trim();
+  const language=document.getElementById('language').value;
+  if (!url) return alert('URL দাও');
+  if (!groqKeys) return alert('Groq API key দাও');
+  localStorage.setItem('groq_keys',groqKeys);
+  localStorage.setItem('language',language);
+  const btn=document.getElementById('submitBtn');
+  btn.disabled=true; btn.textContent='⏳ Processing...';
+  document.getElementById('logCard').style.display='block';
+  document.getElementById('logBox').style.display='block';
+  document.getElementById('logBox').innerHTML='';
+  document.getElementById('resultCard').style.display='none';
+  document.getElementById('segments').innerHTML='';
+  lastSegments=[]; lastFullText='';
+  const es=new EventSource(`/transcribe?${new URLSearchParams({url,groq_keys:groqKeys,language})}`);
+  es.addEventListener('log',e=>{const d=JSON.parse(e.data);addLog(d.msg,d.msg.startsWith('✅')?'success':'')});
+  es.addEventListener('done',e=>{
+    const d=JSON.parse(e.data);
+    es.close(); btn.disabled=false; btn.textContent='Extract Transcript';
+    addLog(`🎉 Done! Duration: ${(d.duration||0).toFixed(1)}s`,'success');
+    lastFullText=d.text||''; lastSegments=Array.isArray(d.segments)?d.segments:[];
+    document.getElementById('fullText').textContent=lastFullText;
+    document.getElementById('metaInfo').textContent=`Strategy: ${d.strategy||'-'} | Language: ${d.language||'-'}`;
+    document.getElementById('resultCard').style.display='block';
+    const segBox=document.getElementById('segments');
+    segBox.innerHTML='';
+    for(const seg of lastSegments){
+      const div=document.createElement('div');
+      div.className='seg';
+      div.innerHTML=`<span class="ts">${fmtTime(seg.start)} → ${fmtTime(seg.end)}</span><span class="txt"></span>`;
+      div.querySelector('.txt').textContent=seg.text||'';
+      segBox.appendChild(div);
+    }
+    document.getElementById('dubCard').style.display='block';
+    dubLoadKeys();
   });
-  if (tab === 'setup') setupLoadStatus();
+  es.addEventListener('error',e=>{
+    try{addLog('❌ Error: '+JSON.parse(e.data).msg,'error')}catch{addLog('❌ Connection error','error')}
+    es.close(); btn.disabled=false; btn.textContent='Extract Transcript';
+  });
+}
+function copyFull(){navigator.clipboard.writeText(lastFullText||'');alert('Copied!')}
+function copySRT(){
+  let srt='';
+  lastSegments.forEach((seg,idx)=>{srt+=`${idx+1}\n${srtTime(seg.start)} --> ${srtTime(seg.end)}\n${(seg.text||'').trim()}\n\n`});
+  navigator.clipboard.writeText(srt.trim());alert('SRT copied!');
 }
 
-function dubSwitchTab(tab) {
-  document.getElementById('tabAuto').style.display   = tab === 'auto'   ? '' : 'none';
-  document.getElementById('tabManual').style.display = tab === 'manual' ? '' : 'none';
-  document.getElementById('tabAutoBtn').className   = 'tab-btn' + (tab === 'auto'   ? ' tab-active' : '');
-  document.getElementById('tabManualBtn').className = 'tab-btn' + (tab === 'manual' ? ' tab-active' : '');
-}
+// ══════════════════════════════════════════════
+// DUBBING — server-side job with Stop + Live Log
+// ══════════════════════════════════════════════
+async function startDubbing(resumeMode=false) {
+  const keysRaw = document.getElementById('dubGeminiKeys').value.trim();
+  const voice   = document.getElementById('dubVoice').value;
+  const videoUrl= document.getElementById('urlInput').value.trim();
+  const progress= document.getElementById('dubProgress');
+  const btn     = document.getElementById('dubBtn');
+  const pitch   = document.getElementById('fallbackPitch').value;
+  const speed   = document.getElementById('fallbackSpeed').value;
 
-// ── Setup functions ──────────────────────────────────────────────
-async function setupSaveProxy() {
-  const link = document.getElementById('setupVmess').value.trim();
-  const st   = document.getElementById('setupProxyStatus');
-  st.textContent = '⏳ Saving...';
+  if (!videoUrl)                          { alert('Video URL নেই'); return; }
+  if (!dubParsedSegments.length && !resumeMode) { alert('আগে SRT parse করুন'); return; }
+
+  const geminiKeys  = keysRaw ? keysRaw.split('\n').map(k=>k.trim()).filter(Boolean) : [];
+  const segments    = dubParsedSegments.filter(s=>s.text).map(s=>({start:s.start,end:s.end,text:s.text}));
+  const dubLang     = document.getElementById('dubTranslateLang').value;
+  const useDucking  = document.getElementById('duckingToggle')?.checked ?? false;
+  const useConcat   = document.getElementById('concatToggle')?.checked ?? true;
+
+  if (!segments.length && !resumeMode) { alert('কমপক্ষে একটা translation দিন'); return; }
+
+  btn.disabled=true;
+  document.getElementById('dubResumeBtn').style.display='none';
+  document.getElementById('dubVideoWrap').style.display='none';
+  document.getElementById('dubStopBtn').style.display='block';
+  document.getElementById('ttsLogPanel').style.display='block';
+  document.getElementById('ttsLogBox').innerHTML='';
+  initKeyBadges(geminiKeys);
+
+  progress.textContent='⏳ Server এ TTS job শুরু হচ্ছে...';
+
+  // ── Job start ──────────────────────────────
+  let jobId;
   try {
-    const r = await fetch('/setup/config', {
+    const r = await fetch('/tts/start',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ VMESS_LINK: link || null, YTDLP_PROXY: link && link.startsWith('socks5') ? link : null })
+      body: JSON.stringify({
+        segments, gemini_keys:geminiKeys, voice,
+        edge_pitch:pitch, edge_rate:speed,
+        remove_silence: true,
+        resume_id: resumeMode ? getSavedJobId() : '',
+      }),
     });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
-    st.textContent = d.ok ? '✅ Saved & xray started' : '❌ ' + (d.error||'error');
-  } catch(e) { st.textContent = '❌ ' + e.message; }
-}
-
-async function setupTestProxy() {
-  const st = document.getElementById('setupProxyStatus');
-  st.textContent = '⏳ Testing proxy...';
-  try {
-    const r = await fetch('/setup/proxy-test', {method:'POST'});
-    const d = await r.json();
-    st.textContent = d.ok ? `✅ Proxy OK — IP: ${d.ip}` : `❌ Failed: ${d.error}`;
-  } catch(e) { st.textContent = '❌ ' + e.message; }
-}
-
-async function setupClearProxy() {
-  const st = document.getElementById('setupProxyStatus');
-  await fetch('/setup/config', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ VMESS_LINK: '', YTDLP_PROXY: '' })});
-  st.textContent = '🗑 Proxy cleared';
-  document.getElementById('setupVmess').value = '';
-}
-
-async function setupSaveCookies() {
-  const cookies = document.getElementById('setupCookies').value.trim();
-  const st = document.getElementById('setupCookieStatus');
-  if (!cookies) { st.textContent = '❌ Empty'; return; }
-  st.textContent = '⏳ Saving...';
-  try {
-    const r = await fetch('/setup/cookies', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({cookies})});
-    const d = await r.json();
-    st.textContent = d.ok ? `✅ Saved (${d.size} bytes)` : '❌ ' + d.error;
-  } catch(e) { st.textContent = '❌ ' + e.message; }
-}
-
-async function setupDeleteCookies() {
-  const st = document.getElementById('setupCookieStatus');
-  await fetch('/setup/cookies', {method:'DELETE'});
-  st.textContent = '🗑 Cookies deleted';
-  document.getElementById('setupCookies').value = '';
-}
-
-async function setupLoadStatus() {
-  const box = document.getElementById('setupStatusBox');
-  try {
-    const r = await fetch('/setup/status');
-    const d = await r.json();
-    box.textContent = JSON.stringify(d, null, 2);
-  } catch(e) { box.textContent = 'error: ' + e.message; }
-}
-
-// ── Auto Translate ও Parse SRT ── (আগের মতো রাখা হলো)
-async function dubAutoTranslate() {
-  const lang     = document.getElementById('dubTranslateLang').value;
-  const provider = document.getElementById('dubTranslateProvider').value;
-  const status   = document.getElementById('dubTranslateStatus');
-  const btn      = document.getElementById('dubTranslateBtn');
-
-  localStorage.setItem(DUB_PROVIDER_KEY, provider);
-
-  if (!lastSegments.length) { alert('আগে transcript করুন'); return; }
-
-  let keys = [];
-  if (provider === 'gemini') {
-    const raw = document.getElementById('dubGeminiKeys').value.trim();
-    if (!raw) { alert('Gemini API keys দিন'); return; }
-    keys = raw.split('\n').map(k => k.trim()).filter(Boolean);
-  } else {
-    const raw = document.getElementById('dubGroqKeys').value.trim();
-    if (!raw) { alert('Settings এ Groq API keys দিন'); return; }
-    keys = raw.split('\n').map(k => k.trim()).filter(Boolean);
+    jobId = d.job_id;
+    currentJobId = jobId;
+    saveTtsJobId(jobId);
+    if (d.resumed) progress.textContent='🔄 আগের job resume হচ্ছে...';
+  } catch(e) {
+    progress.textContent='❌ Job start error: '+e.message;
+    _dubReset(); return;
   }
 
-  btn.disabled = true;
-  dubParsedSegments = [];
+  // ── SSE progress + log ─────────────────────
+  let ttsResults=null;
+  await new Promise(resolve=>{
+    const es=new EventSource(`/tts/status/${jobId}`);
 
-  const BATCH = provider === 'groq' ? 15 : 20;
-  const MAX_ATTEMPTS_PER_BATCH = 30;
-  let keyIdx = 0;
-  let allTranslated = [];
+    es.addEventListener('log',e=>{
+      const d=JSON.parse(e.data);
+      if (d.entries) addTtsLog(d.entries);
+    });
 
-  for (let i = 0; i < lastSegments.length; i += BATCH) {
-    const batch = lastSegments.slice(i, i + BATCH);
-    status.textContent = `⏳ Translating ${i+1}–${Math.min(i+BATCH, lastSegments.length)} / ${lastSegments.length} (${provider})...`;
+    es.addEventListener('progress',e=>{
+      const d=JSON.parse(e.data);
+      const pct=d.total?Math.round(d.done/d.total*100):0;
+      const preview=d.seg_text?`"${d.seg_text}..."` :'';
+      progress.textContent=`🔊 TTS: ${d.done}/${d.total} (${pct}%) ${preview}`;
+      if (d.status==='stopped'){
+        progress.textContent='🛑 Job stopped।';
+        es.close(); resolve();
+      }
+    });
 
-    const prompt = `Translate the following subtitles to ${lang}.\nReturn ONLY a JSON array of translated strings in the same order, no explanation, no markdown.\nExample: ["translation1","translation2"]\n\nSubtitles:\n${batch.map((s,j) => `${j+1}. ${s.text}`).join('\n')}`;
+    es.addEventListener('done',e=>{
+      const d=JSON.parse(e.data);
+      ttsResults=d.results;
+      if(d.status==='stopped') progress.textContent='🛑 Stopped।';
+      es.close(); resolve();
+    });
 
-    let batchDone = false;
-    let attempts = 0;
+    es.addEventListener('error',e=>{
+      try{progress.textContent='❌ '+JSON.parse(e.data).msg}
+      catch{progress.textContent='❌ SSE error'}
+      es.close(); resolve();
+    });
+  });
 
-    while (!batchDone && attempts < MAX_ATTEMPTS_PER_BATCH) {
-      const key = keys[keyIdx % keys.length];
-      keyIdx++;
-      attempts++;
+  document.getElementById('dubStopBtn').style.display='none';
 
-      try {
+  if (!ttsResults || !ttsResults.length) {
+    progress.textContent='❌ TTS কোনো result আসেনি';
+    _dubReset(); return;
+  }
+
+  const okSegs=ttsResults.filter(r=>r.pcm_b64);
+  progress.textContent=`✅ TTS শেষ (${okSegs.length}/${ttsResults.length})। Video বানাচ্ছে...`;
+
+  try {
+    if (!okSegs.length) throw new Error('কোনো audio segment নেই');
+    const resp=await fetch('/dub',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        video_url:videoUrl,
+        segments:okSegs.map(r=>({start:r.start,end:r.end,pcm_b64:r.pcm_b64,sample_rate:24000})),
+      }),
+    });
+    if (!resp.ok){const err=await resp.json();throw new Error(err.error||`HTTP ${resp.status}`);}
+    const result=await resp.json();
+    progress.textContent='✅ Done! Video ready।';
+    const videoEl=document.getElementById('dubVideo');
+    videoEl.src=result.video_url;
+    document.getElementById('dubDownload').href=result.video_url;
+    document.getElementById('dubVideoWrap').style.display='block';
+    videoEl.load();
+    saveTtsJobId('');
+  } catch(e) {
+    progress.textContent='❌ Video error: '+e.message;
+  }
+
+  _dubReset();
+}
+
+function _dubReset(){
+  document.getElementById('dubBtn').disabled=false;
+  document.getElementById('dubStopBtn').style.display='none';
+}
+
+async function stopDubbing(){
+  if (!currentJobId) return;
+  document.getElementById('dubProgress').textContent='🛑 Stop করা হচ্ছে...';
+  try {
+    await fetch(`/tts/stop/${currentJobId}`,{method:'POST'});
+  } catch(e) {
+    document.getElementById('dubProgress').textContent='❌ Stop error: '+e.message;
+  }
+}
+
+// ══════════════════════════════════════════════
+// Tabs
+// ══════════════════════════════════════════════
+function switchTopTab(tab){
+  document.getElementById('topMain').style.display  = tab==='main'  ?'':'none';
+  document.getElementById('topSetup').style.display = tab==='setup' ?'':'none';
+  document.querySelectorAll('.top-tab').forEach((b,i)=>{
+    b.classList.toggle('active',(tab==='main'&&i===0)||(tab==='setup'&&i===1));
+  });
+  if(tab==='setup') setupLoadStatus();
+}
+function dubSwitchTab(tab){
+  document.getElementById('tabAuto').style.display   = tab==='auto'  ?'':'none';
+  document.getElementById('tabManual').style.display = tab==='manual'?'':'none';
+  document.getElementById('tabAutoBtn').className    = 'tab-btn'+(tab==='auto'  ?' tab-active':'');
+  document.getElementById('tabManualBtn').className  = 'tab-btn'+(tab==='manual'?' tab-active':'');
+}
+
+// ══════════════════════════════════════════════
+// Auto Translate
+// ══════════════════════════════════════════════
+async function dubAutoTranslate(){
+  const lang=document.getElementById('dubTranslateLang').value;
+  const provider=document.getElementById('dubTranslateProvider').value;
+  const status=document.getElementById('dubTranslateStatus');
+  const btn=document.getElementById('dubTranslateBtn');
+  localStorage.setItem(DUB_PROVIDER_KEY,provider);
+  if(!lastSegments.length){alert('আগে transcript করুন');return;}
+  let keys=[];
+  if(provider==='gemini'){
+    const raw=document.getElementById('dubGeminiKeys').value.trim();
+    if(!raw){alert('Gemini API keys দিন');return;}
+    keys=raw.split('\n').map(k=>k.trim()).filter(Boolean);
+  }else{
+    const raw=document.getElementById('dubGroqKeys').value.trim();
+    if(!raw){alert('Groq API keys দিন');return;}
+    keys=raw.split('\n').map(k=>k.trim()).filter(Boolean);
+  }
+  btn.disabled=true; dubParsedSegments=[];
+  const BATCH=provider==='groq'?15:20;
+  const MAX_ATTEMPTS=30;
+  let keyIdx=0,allTranslated=[];
+  for(let i=0;i<lastSegments.length;i+=BATCH){
+    const batch=lastSegments.slice(i,i+BATCH);
+    status.textContent=`⏳ Translating ${i+1}–${Math.min(i+BATCH,lastSegments.length)} / ${lastSegments.length}...`;
+    const prompt=`Translate the following subtitles to ${lang}.\nReturn ONLY a JSON array of translated strings in the same order, no explanation, no markdown.\nExample: ["translation1","translation2"]\n\nSubtitles:\n${batch.map((s,j)=>`${j+1}. ${s.text}`).join('\n')}`;
+    let batchDone=false,attempts=0;
+    while(!batchDone&&attempts<MAX_ATTEMPTS){
+      const key=keys[keyIdx%keys.length];keyIdx++;attempts++;
+      try{
         let translations;
-        if (provider === 'gemini') {
-          const resp = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
-            {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({contents: [{parts: [{text: prompt}]}]})
-            }
-          );
-          if (resp.status === 429) throw Object.assign(new Error('quota'), {code: 429});
-          if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`);
-          const data = await resp.json();
-          let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          text = text.replace(/```json|```/g, '').trim();
-          translations = JSON.parse(text);
-        } else {
-          const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${key}`
-            },
-            body: JSON.stringify({
-              model: 'llama-3.3-70b-versatile',
-              messages: [
-                { role: 'system', content: 'You are a subtitle translator. Always respond with only a JSON array of strings, no explanation.' },
-                { role: 'user', content: prompt }
-              ],
-              temperature: 0.3,
-              max_tokens: 2048
-            })
-          });
-          if (resp.status === 429) throw Object.assign(new Error('quota'), {code: 429});
-          if (!resp.ok) throw new Error(`Groq HTTP ${resp.status}`);
-          const data = await resp.json();
-          let text = data?.choices?.[0]?.message?.content || '';
-          text = text.replace(/```json|```/g, '').trim();
-          translations = JSON.parse(text);
+        if(provider==='gemini'){
+          const resp=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+            {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
+          if(resp.status===429) throw Object.assign(new Error('quota'),{code:429});
+          if(!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`);
+          const data=await resp.json();
+          translations=JSON.parse((data?.candidates?.[0]?.content?.parts?.[0]?.text||'').replace(/```json|```/g,'').trim());
+        }else{
+          const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},
+            body:JSON.stringify({model:'llama-3.3-70b-versatile',
+              messages:[{role:'system',content:'You are a subtitle translator. Always respond with only a JSON array of strings, no explanation.'},
+                        {role:'user',content:prompt}],temperature:0.3,max_tokens:2048})});
+          if(resp.status===429) throw Object.assign(new Error('quota'),{code:429});
+          if(!resp.ok) throw new Error(`Groq HTTP ${resp.status}`);
+          const data=await resp.json();
+          translations=JSON.parse((data?.choices?.[0]?.message?.content||'').replace(/```json|```/g,'').trim());
         }
-        batch.forEach((seg, j) => {
-          allTranslated.push({ start: seg.start, end: seg.end, text: translations[j] || seg.text });
-        });
-        batchDone = true;
-      } catch(e) {
-        if (e.code === 429) {
-          const delay = Math.min(1000 * Math.pow(2, attempts), 30000) + Math.random() * 1000;
-          status.textContent = `⏳ Rate limited, retrying in ${(delay/1000).toFixed(1)}s...`;
-          await new Promise(r => setTimeout(r, delay));
-        } else {
-          status.textContent = `❌ Error: ${e.message}`;
-          batchDone = true;
-        }
+        batch.forEach((seg,j)=>allTranslated.push({start:seg.start,end:seg.end,text:translations[j]||seg.text}));
+        batchDone=true;
+      }catch(e){
+        if(e.code===429){
+          const delay=Math.min(1000*Math.pow(2,attempts),30000)+Math.random()*1000;
+          status.textContent=`⏳ Rate limited, retrying in ${(delay/1000).toFixed(1)}s...`;
+          await new Promise(r=>setTimeout(r,delay));
+        }else{status.textContent=`❌ Error: ${e.message}`;batchDone=true;}
       }
     }
-    if (attempts >= MAX_ATTEMPTS_PER_BATCH && !batchDone) {
-      status.textContent = `❌ Batch failed after ${MAX_ATTEMPTS_PER_BATCH} attempts.`;
-    }
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r=>setTimeout(r,200));
   }
-
-  dubParsedSegments = allTranslated;
-  status.textContent = `✅ ${dubParsedSegments.length}টা segment translate হয়েছে (${provider})`;
-
-  showDubPreview();
-  btn.disabled = false;
+  dubParsedSegments=allTranslated;
+  status.textContent=`✅ ${dubParsedSegments.length}টা segment translate হয়েছে`;
+  showDubPreview(); btn.disabled=false;
 }
 
-function showDubPreview() {
-  const box = document.getElementById('dubSegments');
-  box.innerHTML = '';
-  for (const seg of dubParsedSegments) {
-    const dur = (seg.end - seg.start).toFixed(1);
-    const div = document.createElement('div');
-    div.className = 'dub-seg';
-    div.innerHTML = `
-      <span class="ts">${fmtTime(seg.start)} → ${fmtTime(seg.end)}<br><span style="color:#555;font-size:0.72rem">${dur}s</span></span>
-      <span class="orig"></span>
-    `;
-    div.querySelector('.orig').textContent = seg.text;
+function showDubPreview(){
+  const box=document.getElementById('dubSegments');
+  box.innerHTML='';
+  for(const seg of dubParsedSegments){
+    const dur=(seg.end-seg.start).toFixed(1);
+    const div=document.createElement('div');
+    div.className='dub-seg';
+    div.innerHTML=`<span class="ts">${fmtTime(seg.start)} → ${fmtTime(seg.end)}<br><span style="color:#555;font-size:.72rem">${dur}s</span></span><span class="orig"></span>`;
+    div.querySelector('.orig').textContent=seg.text;
     box.appendChild(div);
   }
-  document.getElementById('dubBtn').style.display = 'block';
+  document.getElementById('dubBtn').style.display='block';
 }
 
-function srtTimeToSec(t) {
-  const clean = t.replace(',', '.');
-  const parts = clean.split(':');
-  return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+// ══════════════════════════════════════════════
+// SRT Parse
+// ══════════════════════════════════════════════
+function srtTimeToSec(t){
+  const parts=t.replace(',','.').split(':');
+  return parseFloat(parts[0])*3600+parseFloat(parts[1])*60+parseFloat(parts[2]);
 }
-
-function dubParseSrt() {
-  const raw = document.getElementById('dubSrtInput').value.trim();
-  const status = document.getElementById('dubParseStatus');
-
-  if (!raw) { status.textContent = '❌ SRT খালি'; return; }
-
-  const blocks = raw.split(/\n\s*\n/);
-  dubParsedSegments = [];
-
-  for (const block of blocks) {
-    const lines = block.trim().split('\n');
-    if (lines.length < 3) continue;
-    const tsLine = lines.find(l => l.includes('-->'));
-    if (!tsLine) continue;
-    const [startStr, endStr] = tsLine.split('-->').map(s => s.trim());
-    const start = srtTimeToSec(startStr);
-    const end   = srtTimeToSec(endStr);
-    const text  = lines.slice(lines.indexOf(tsLine) + 1).join(' ').trim();
-    if (text) dubParsedSegments.push({ start, end, text });
+function dubParseSrt(){
+  const raw=document.getElementById('dubSrtInput').value.trim();
+  const status=document.getElementById('dubParseStatus');
+  if(!raw){status.textContent='❌ SRT খালি';return;}
+  dubParsedSegments=[];
+  for(const block of raw.split(/\n\s*\n/)){
+    const lines=block.trim().split('\n');
+    const tsLine=lines.find(l=>l.includes('-->'));
+    if(!tsLine) continue;
+    const[startStr,endStr]=tsLine.split('-->').map(s=>s.trim());
+    const text=lines.slice(lines.indexOf(tsLine)+1).join(' ').trim();
+    if(text) dubParsedSegments.push({start:srtTimeToSec(startStr),end:srtTimeToSec(endStr),text});
   }
-
-  if (!dubParsedSegments.length) {
-    status.textContent = '❌ কোনো segment parse হয়নি';
-    return;
-  }
-
-  status.textContent = `✅ ${dubParsedSegments.length}টা segment parse হয়েছে`;
+  if(!dubParsedSegments.length){status.textContent='❌ কোনো segment parse হয়নি';return;}
+  status.textContent=`✅ ${dubParsedSegments.length}টা segment parse হয়েছে`;
   showDubPreview();
+}
+
+// ══════════════════════════════════════════════
+// Setup
+// ══════════════════════════════════════════════
+async function setupSaveProxy(){
+  const link=document.getElementById('setupVmess').value.trim();
+  const st=document.getElementById('setupProxyStatus');
+  st.textContent='⏳ Saving...';
+  try{
+    const r=await fetch('/setup/config',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({VMESS_LINK:link||null,YTDLP_PROXY:link&&link.startsWith('socks5')?link:null})});
+    const d=await r.json();
+    st.textContent=d.ok?'✅ Saved & xray started':'❌ '+(d.error||'error');
+  }catch(e){st.textContent='❌ '+e.message;}
+}
+async function setupTestProxy(){
+  const st=document.getElementById('setupProxyStatus');
+  st.textContent='⏳ Testing proxy...';
+  try{
+    const r=await fetch('/setup/proxy-test',{method:'POST'});
+    const d=await r.json();
+    st.textContent=d.ok?`✅ Proxy OK — IP: ${d.ip}`:`❌ Failed: ${d.error}`;
+  }catch(e){st.textContent='❌ '+e.message;}
+}
+async function setupClearProxy(){
+  await fetch('/setup/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({VMESS_LINK:'',YTDLP_PROXY:''})});
+  document.getElementById('setupProxyStatus').textContent='🗑 Proxy cleared';
+  document.getElementById('setupVmess').value='';
+}
+async function setupSaveCookies(){
+  const cookies=document.getElementById('setupCookies').value.trim();
+  const st=document.getElementById('setupCookieStatus');
+  if(!cookies){st.textContent='❌ Empty';return;}
+  st.textContent='⏳ Saving...';
+  try{
+    const r=await fetch('/setup/cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookies})});
+    const d=await r.json();
+    st.textContent=d.ok?`✅ Saved (${d.size} bytes)`:'❌ '+d.error;
+  }catch(e){st.textContent='❌ '+e.message;}
+}
+async function setupDeleteCookies(){
+  await fetch('/setup/cookies',{method:'DELETE'});
+  document.getElementById('setupCookieStatus').textContent='🗑 Cookies deleted';
+  document.getElementById('setupCookies').value='';
+}
+async function setupLoadStatus(){
+  const box=document.getElementById('setupStatusBox');
+  try{const r=await fetch('/setup/status');box.textContent=JSON.stringify(await r.json(),null,2);}
+  catch(e){box.textContent='error: '+e.message;}
 }
 </script>
 </body>
