@@ -178,22 +178,57 @@ def pick_edge_voice(gemini_voice, user_choice="auto"):
     return EDGE_VOICE_FEMALE
 
 
-# â”€â”€ KEY ROTATION + INFINITE RETRY + BACKUP MODEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â”€â”€ SMART KEY POOL: per-key cooldown timer, RPM counter, healthy-first â”€â”€
+def _init_key_pool(job, n_keys):
+    """Job dict-à¦ key pool state initialize à¦•à¦°à§‡ (idempotent)."""
+    if "key_pool" not in job or len(job.get("key_pool", [])) != n_keys:
+        job["key_pool"] = [
+            {"idx": i, "cooldown_until": 0.0, "rpm_count": 0,
+             "rpm_window_start": time.time(),
+             "total_ok": 0, "total_429": 0, "total_err": 0, "last_status": "ready"}
+            for i in range(n_keys)
+        ]
+
+def _pick_healthy_key(job, now):
+    """Return (key_idx, info) of next healthy key, or None if all cooling."""
+    pool = job["key_pool"]
+    # RPM window reset (60s)
+    for k in pool:
+        if now - k["rpm_window_start"] >= 60:
+            k["rpm_window_start"] = now
+            k["rpm_count"] = 0
+    # Healthy keys: cooldown_until <= now
+    healthy = [k for k in pool if k["cooldown_until"] <= now]
+    if not healthy:
+        return None
+    # Round-robin among healthy: pick the one with smallest total recent activity
+    healthy.sort(key=lambda k: (k["rpm_count"], k["total_ok"]))
+    return healthy[0]
+
+def _next_cooldown_eta(job, now):
+    """à¦•à¦–à¦¨ à¦•à§‹à¦¨à§‹ key healthy à¦¹à¦¬à§‡ â€” à¦¸à¦¬à¦šà§‡à¦¯à¦¼à§‡ à¦•à¦¾à¦›à§‡à¦° timeà¥¤"""
+    pool = job["key_pool"]
+    futures = [k["cooldown_until"] - now for k in pool if k["cooldown_until"] > now]
+    return max(0, int(min(futures))) if futures else 0
+
+
+# â”€â”€ synthesize_segment: SMART POOL + INFINITE RETRY + KEY DELAY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async def synthesize_segment(*, text, voice, language="Bengali",
                               gemini_keys, edge_pitch="-5Hz", edge_rate="+12%",
                               edge_voice="auto", gemini_only=True,
                               key_idx_ref=None, job=None, seg_label="",
-                              cooldown_sec=65, backup_after_rounds=3,
-                              max_rounds=999):
+                              cooldown_sec=300, backup_after_rounds=3,
+                              max_rounds=999, key_delay_sec=2.0,
+                              rpm_limit=15):
     """
-    STRONG STRATEGY (zip reference + multi-key rotation):
-      â€¢ Cache check (main + backup model)
-      â€¢ à¦ªà§à¦°à¦¤à¦¿ round-à¦ à¦¸à¦¬ key try (main model)
-      â€¢ Round à¦¶à§‡à¦·à§‡ cooldown 65s (Stop responsive â€” 1s à¦•à¦°à§‡ à¦šà§‡à¦•)
-      â€¢ 3 round-à¦à¦° à¦ªà¦°à§‡ alternately backup model (gemini-2.5-pro-preview-tts)
-      â€¢ gemini_only=True â†’ à¦•à¦–à¦¨à§‹ Edge-à¦ à¦¯à¦¾à¦¬à§‡ à¦¨à¦¾, infinite retry
-      â€¢ gemini_only=False â†’ max_rounds-à¦à¦° à¦ªà¦°à§‡ Edge fallback
-      â€¢ 429 + non-429 à¦¦à§à¦‡ error-à¦à¦‡ next key try à¦•à¦°à§‡ (skip à¦•à¦°à§‡ à¦¨à¦¾)
+    V3 STRATEGY:
+      â€¢ Smart pool: healthy keys first, 429 à¦¹à¦¿à¦Ÿ key 5min cooldown
+      â€¢ Key-à¦à¦° à¦®à¦¾à¦à§‡ 2s delay (burst rate-limit à¦à¦¡à¦¼à¦¾à¦¨à§‹)
+      â€¢ RPM tracking (default 15/min Gemini limit)
+      â€¢ 429 â†’ à¦“à¦‡ key 300s cooldown à¦¤à§‡ à¦¯à¦¾à¦¬à§‡ â†’ à¦…à¦¨à§à¦¯ healthy key à¦šà§‡à¦·à§à¦Ÿà¦¾
+      â€¢ à¦¸à¦¬ key cooling â†’ à¦¤à¦–à¦¨ cooldown ETA wait à¦•à¦°à§‡ retry
+      â€¢ 3+ round-à¦ backup model (gemini-2.5-pro-preview-tts) alternately
+      â€¢ gemini_only=True â†’ infinite retry, never Edge
     """
     def _log(msg, lvl="info"):
         if job is not None: job_log(job, msg, lvl)
@@ -211,85 +246,105 @@ async def synthesize_segment(*, text, voice, language="Bengali",
                 with open(cached,"rb") as f: wav_bytes = f.read()
                 return wav_bytes[44:], "cache"
 
-    # ---- No keys â†’ Edge ----
+    # ---- No keys â†’ Edge (or user explicitly chose Edge) ----
     if not gemini_keys:
         _log(f"[{lbl}] ðŸŽ™ Edge-TTS ({ev})")
         pcm = await _edge_tts_call(text, voice=ev, pitch=edge_pitch, rate=edge_rate)
         return pcm, f"edge({ev})"
 
-    if key_idx_ref is None: key_idx_ref = [0]
+    # Initialize key pool in job state
+    _init_key_pool(job, len(gemini_keys))
 
-    # ---- Infinite retry loop ----
     round_num = 0
-    while True:
-        round_num += 1
-        if job and job.get("stop_requested"): raise InterruptedError("stopped")
+    keys_tried_this_round = set()
 
-        use_backup = (round_num > backup_after_rounds and round_num % 2 == 0)
+    while True:
+        if job and job.get("stop_requested"):
+            raise InterruptedError("stopped")
+
+        now = time.time()
+        kinfo = _pick_healthy_key(job, now)
+
+        if kinfo is None:
+            # All keys in cooldown â†’ wait for the nearest one
+            eta = _next_cooldown_eta(job, now)
+            _log(f"[{lbl}] ðŸ”´ à¦¸à¦¬ {len(gemini_keys)}à¦Ÿà¦¾ key cooldown-à¦ â€” à¦ªà¦°à¦¬à¦°à§à¦¤à§€ {eta}s à¦…à¦ªà§‡à¦•à§à¦·à¦¾â€¦", "warn")
+            # Sleep responsively
+            for _ in range(max(1, eta)):
+                if job and job.get("stop_requested"): raise InterruptedError("stopped")
+                await asyncio.sleep(1)
+            keys_tried_this_round.clear()
+            round_num += 1
+            continue
+
+        ki   = kinfo["idx"]
+        key  = gemini_keys[ki]
+        klbl = f"key#{ki+1}"
+
+        # Avoid trying same key twice in same round
+        if ki in keys_tried_this_round:
+            # All healthy keys exhausted this round â€” small pause, new round
+            keys_tried_this_round.clear()
+            round_num += 1
+            await asyncio.sleep(0.5)
+            continue
+        keys_tried_this_round.add(ki)
+
+        # Backup model alternation (round-based, not key-based)
+        use_backup = (round_num >= backup_after_rounds and round_num % 2 == 1)
         cur_model  = GEMINI_TTS_BACKUP_MODEL if use_backup else GEMINI_TTS_MODEL
         mdl_lbl    = "backup" if use_backup else "main"
 
-        any_429 = False
-        any_other_err = False
+        # RPM check
+        kinfo["rpm_count"] += 1
+        _log(f"[{lbl}] ðŸ”‘ {klbl} ({mdl_lbl}) RPM:{kinfo['rpm_count']}/{rpm_limit} â†’ trying (r{round_num+1})...")
+        kinfo["last_status"] = "trying"
+        save_job(job)
 
-        for _ in range(len(gemini_keys)):
-            if job and job.get("stop_requested"): raise InterruptedError("stopped")
+        try:
+            pcm = await _gemini_tts_call(text, voice, key, language, model=cur_model)
+            kinfo["total_ok"] += 1
+            kinfo["last_status"] = "ok"
+            _log(f"[{lbl}] âœ… {klbl} OK ({mdl_lbl}) â€” total_ok:{kinfo['total_ok']}", "success")
+            save_job(job)
 
-            ki    = key_idx_ref[0] % len(gemini_keys)
-            key   = gemini_keys[ki]
-            klbl  = f"key#{ki+1}"
-            key_idx_ref[0] += 1
+            # Cache save
+            ck = _cache_key(text, voice, language, cur_model)
+            fd, tw = tempfile.mkstemp(suffix=".wav"); os.close(fd)
+            with open(tw,"wb") as f: f.write(pcm_to_wav(pcm))
+            _cache_set(ck, tw)
+            try: os.unlink(tw)
+            except: pass
 
-            _log(f"[{lbl}] ðŸ”‘ {klbl} ({mdl_lbl}) â†’ trying (r{round_num})...")
+            return pcm, f"gemini-{mdl_lbl}({klbl})"
 
-            try:
-                pcm = await _gemini_tts_call(text, voice, key, language, model=cur_model)
-                _log(f"[{lbl}] âœ… {klbl} OK ({mdl_lbl})", "success")
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            if code == 429:
+                kinfo["total_429"] += 1
+                kinfo["cooldown_until"] = time.time() + cooldown_sec
+                kinfo["last_status"] = "limited"
+                _log(f"[{lbl}] â³ {klbl} â†’ 429 â†’ {cooldown_sec}s cooldown "
+                     f"(429s={kinfo['total_429']})", "warn")
+            else:
+                kinfo["total_err"] += 1
+                kinfo["cooldown_until"] = time.time() + 30  # mild cooldown on HTTP error
+                kinfo["last_status"] = f"http_{code}"
+                _log(f"[{lbl}] âŒ {klbl} HTTP {code} â†’ 30s cooldown", "error")
+            save_job(job)
+        except InterruptedError:
+            raise
+        except Exception as e:
+            kinfo["total_err"] += 1
+            kinfo["cooldown_until"] = time.time() + 15
+            kinfo["last_status"] = "error"
+            _log(f"[{lbl}] âŒ {klbl} error: {str(e)[:80]} â†’ 15s cooldown", "error")
+            save_job(job)
 
-                # Cache save
-                ck = _cache_key(text, voice, language, cur_model)
-                fd, tw = tempfile.mkstemp(suffix=".wav"); os.close(fd)
-                with open(tw,"wb") as f: f.write(pcm_to_wav(pcm))
-                _cache_set(ck, tw)
-                try: os.unlink(tw)
-                except: pass
+        # Key delay before next key (burst prevention)
+        if not (job and job.get("stop_requested")):
+            await asyncio.sleep(key_delay_sec)
 
-                return pcm, f"gemini-{mdl_lbl}({klbl})"
-
-            except httpx.HTTPStatusError as e:
-                code = e.response.status_code
-                if code == 429:
-                    _log(f"[{lbl}] â³ {klbl} â†’ 429 rate limited", "warn")
-                    any_429 = True
-                else:
-                    _log(f"[{lbl}] âŒ {klbl} HTTP {code} â†’ next key", "error")
-                    any_other_err = True
-                continue
-            except InterruptedError:
-                raise
-            except Exception as e:
-                _log(f"[{lbl}] âŒ {klbl} error: {str(e)[:80]} â†’ next key", "error")
-                any_other_err = True
-                continue
-
-        # All keys tried this round, none succeeded
-        if not gemini_only and round_num >= max_rounds:
-            _log(f"[{lbl}] âš ï¸ {max_rounds} rounds done â†’ Edge-TTS ({ev})", "warn")
-            pcm = await _edge_tts_call(text, voice=ev, pitch=edge_pitch, rate=edge_rate)
-            return pcm, f"edge-fallback({ev})"
-
-        next_mdl = "backup" if (round_num+1 > backup_after_rounds and (round_num+1) % 2 == 0) else "main"
-        reason = "à¦¸à¦¬ key 429" if any_429 and not any_other_err else                  ("à¦®à¦¿à¦¶à§à¦° error" if any_other_err else "fail")
-        mode_lbl = "â™¾ Gemini-only (infinite retry)" if gemini_only else f"r{round_num}/{max_rounds}"
-        _log(
-            f"[{lbl}] ðŸ”´ Round {round_num} done ({reason}) â†’ {cooldown_sec}s cooldown, "
-            f"à¦ªà¦°à§‡ {next_mdl} model-à¦ r{round_num+1}à¥¤ {mode_lbl}",
-            "warn"
-        )
-        for _ in range(cooldown_sec):
-            if job and job.get("stop_requested"): raise InterruptedError("stopped")
-            await asyncio.sleep(1)
-        _log(f"[{lbl}] ðŸŸ¡ Cooldown done â€” r{round_num+1} ({next_mdl}) à¦¶à§à¦°à§...", "info")
 
 # â”€â”€ Background Audio Ducking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def apply_ducking(video_path, dubbed_wav, out_path,
@@ -449,7 +504,7 @@ def tts_start():
     tts_provider   = (data.get("tts_provider", "gemini") or "gemini").strip().lower()
     gemini_only    = bool(data.get("gemini_only", True))
     resume_id      = data.get("resume_id", "").strip()
-    remove_silence    = data.get("remove_silence", True)
+    remove_silence    = bool(data.get("remove_silence", False))   # default OFF
     language          = data.get("language", "Bengali")
     concat_segments   = bool(data.get("concat_segments", False))   # default OFF
 
@@ -530,9 +585,15 @@ def tts_stop(job_id):
 
 @app.route("/tts/status/<job_id>")
 def tts_status(job_id):
+    # Allow client to resume log stream from a given index
+    try:
+        start_log_idx = int(request.args.get("log_from", "0"))
+    except Exception:
+        start_log_idx = 0
+
     def generate():
         last_done    = -1
-        last_log_len = 0
+        last_log_len = start_log_idx
         while True:
             job = load_job(job_id)
             if not job:
@@ -608,6 +669,31 @@ def tts_status(job_id):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/tts/active")
+def tts_active():
+    """List recent jobs (newest first) â€” used for page-refresh recovery."""
+    out = []
+    try:
+        files = sorted(os.listdir(JOBS_DIR), key=lambda f: -os.path.getmtime(os.path.join(JOBS_DIR, f)))
+        for fn in files[:20]:
+            if not fn.endswith(".json"): continue
+            try:
+                j = json.loads(open(os.path.join(JOBS_DIR, fn)).read())
+            except: continue
+            out.append({
+                "id":       j.get("id"),
+                "status":   j.get("status"),
+                "done":     j.get("done", 0),
+                "total":    j.get("total", 0),
+                "current":  j.get("current", -1),
+                "created":  j.get("created_at", 0),
+                "log_count": len(j.get("logs", [])),
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"jobs": out})
 
 
 @app.route("/tts/job/<job_id>")
