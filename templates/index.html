@@ -348,16 +348,70 @@ window.onload = async () => {
       const r = await fetch(`/tts/job/${savedId}`);
       if (r.ok) {
         const job = await r.json();
-        if (['pending','running','complete'].includes(job.status)) {
-          document.getElementById('dubProgress').textContent =
-            `🔄 আগের job পাওয়া গেছে (${job.done}/${job.total}) — Resume করতে পারো`;
+        // Restore UI for any non-deleted job
+        document.getElementById('dubCard').style.display = 'block';
+        document.getElementById('ttsLogPanel').style.display = 'block';
+        // Replay all logs first
+        if (job.logs && job.logs.length) {
+          addTtsLog(job.logs);
+        }
+        document.getElementById('dubProgress').textContent =
+          `🔄 Previous job [${savedId.slice(0,6)}] status=${job.status} (${job.done}/${job.total})`;
+
+        if (['pending','running'].includes(job.status)) {
+          // Job still running on backend — re-attach SSE
+          addTtsLog([{t:Date.now()/1000, msg:'🔌 Re-attaching to live job after page refresh...', lvl:'info'}]);
+          currentJobId = savedId;
+          _reattachSSE(savedId, job.logs ? job.logs.length : 0);
+        } else if (job.status === 'stopped' || (job.status === 'complete' && job.done < job.total)) {
           document.getElementById('dubResumeBtn').style.display = 'inline-block';
-          document.getElementById('dubCard').style.display = 'block';
+        } else if (job.status === 'complete' && job.done === job.total) {
+          document.getElementById('dubResumeBtn').style.display = 'inline-block';
+          addTtsLog([{t:Date.now()/1000, msg:'✅ Previous job complete। চাইলে Resume চেপে video build আবার চালাও।', lvl:'success'}]);
         }
       }
-    } catch(e) {}
+    } catch(e) {
+      console.warn('Job recovery failed:', e);
+    }
   }
 };
+
+// SSE re-attachment for page-refresh case
+function _reattachSSE(jobId, logFrom) {
+  const progress = document.getElementById('dubProgress');
+  document.getElementById('dubStopBtn').style.display='block';
+  const es = new EventSource(`/tts/status/${jobId}?log_from=${logFrom||0}`);
+
+  es.addEventListener('log', e=>{
+    try { const d=JSON.parse(e.data); if (d.entries) addTtsLog(d.entries); } catch(_){}
+  });
+  es.addEventListener('progress', e=>{
+    try {
+      const d=JSON.parse(e.data);
+      const pct=d.total?Math.round(d.done/d.total*100):0;
+      progress.textContent=`🔊 TTS: ${d.done}/${d.total} (${pct}%) [reattached]`;
+    } catch(_){}
+  });
+  es.addEventListener('done', e=>{
+    try {
+      const d=JSON.parse(e.data);
+      if (d.status === 'stopped') {
+        progress.textContent='🛑 Job stopped — Resume চাপুন';
+        document.getElementById('dubResumeBtn').style.display='inline-block';
+      } else if (d.status === 'complete') {
+        progress.textContent=`✅ Complete — Resume চেপে video build চালাও`;
+        document.getElementById('dubResumeBtn').style.display='inline-block';
+      }
+    } catch(_){}
+    es.close();
+    document.getElementById('dubStopBtn').style.display='none';
+  });
+  es.addEventListener('error', e=>{
+    addTtsLog([{t:Date.now()/1000, msg:'⚠️ SSE re-attach error', lvl:'warn'}]);
+    es.close();
+    document.getElementById('dubStopBtn').style.display='none';
+  });
+}
 
 // ══════════════════════════════════════════════
 // Job ID helpers
@@ -577,10 +631,10 @@ async function startDubbing(resumeMode=false) {
   const geminiKeys  = keysRaw ? keysRaw.split('\n').map(k=>k.trim()).filter(Boolean) : [];
   const segments    = dubParsedSegments.filter(s=>s.text).map(s=>({start:s.start,end:s.end,text:s.text}));
   const dubLang     = document.getElementById('dubTranslateLang').value;
-  const useDucking  = document.getElementById('duckingToggle')?.checked ?? false;
-  const useConcat   = document.getElementById('concatToggle')?.checked ?? true;
 
   if (!segments.length && !resumeMode) { alert('কমপক্ষে একটা translation দিন'); return; }
+
+  const useDucking = document.getElementById('duckingToggle')?.checked ?? false;
 
   btn.disabled=true;
   document.getElementById('dubResumeBtn').style.display='none';
@@ -665,15 +719,14 @@ async function startDubbing(resumeMode=false) {
 
   const okSegs=ttsResults.filter(r=>r.pcm_b64);
   const failedCount = ttsResults.length - okSegs.length;
+  // STRICT RULE: কোনো segment skip করা যাবে না — fail থাকলে video build হবে না
   if (failedCount > 0) {
-    const proceed = confirm(`⚠️ ${failedCount}/${ttsResults.length} segment fail হয়েছে।\n\nOK = Partial video বানাও\nCancel = Resume চেপে ফেলড segment retry করো`);
-    if (!proceed) {
-      progress.textContent=`⏸ থামানো (${okSegs.length}/${ttsResults.length}) — Resume চাপো`;
-      document.getElementById('dubResumeBtn').style.display='inline-block';
-      _dubReset(); return;
-    }
+    progress.textContent=`⚠️ ${failedCount}/${ttsResults.length} segment fail। Resume চাপুন — Video build হবে না যতক্ষণ সব success না হয়।`;
+    document.getElementById('dubResumeBtn').style.display='inline-block';
+    addTtsLog([{t:Date.now()/1000, msg:`🚫 ${failedCount} segment fail — video build skip। Resume চেপে retry করুন।`, lvl:'error'}]);
+    _dubReset(); return;
   }
-  progress.textContent=`✅ TTS শেষ (${okSegs.length}/${ttsResults.length})। Video বানাচ্ছে...`;
+  progress.textContent=`✅ সব ${okSegs.length}/${ttsResults.length} segment OK। Video বানাচ্ছে...`;
 
   try {
     if (!okSegs.length) throw new Error('কোনো audio segment নেই');
@@ -682,6 +735,7 @@ async function startDubbing(resumeMode=false) {
       body:JSON.stringify({
         video_url:videoUrl,
         segments:okSegs.map(r=>({start:r.start,end:r.end,pcm_b64:r.pcm_b64,sample_rate:24000})),
+        ducking: useDucking,
       }),
     });
     if (!resp.ok){const err=await resp.json();throw new Error(err.error||`HTTP ${resp.status}`);}
