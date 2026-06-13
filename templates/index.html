@@ -87,6 +87,7 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
 
   <div class="top-tabs">
     <button class="top-tab active" onclick="switchTopTab('main')">🎬 Main</button>
+    <button class="top-tab" onclick="switchTopTab('audiomaker')">🎙 Audio Maker</button>
     <button class="top-tab" onclick="switchTopTab('setup')">⚙️ Setup</button>
   </div>
 
@@ -288,6 +289,94 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
     </div>
   </div>
   </div><!-- /topMain -->
+
+  <!-- AUDIO MAKER TAB -->
+  <div id="topAudioMaker" style="display:none">
+    <div class="card">
+      <h2>⚙ Audio Maker Settings</h2>
+      <label>Gemini API Key <span style="font-size:.78rem;color:#e63946">(একটাই — single key, infinite retry)</span></label>
+      <input type="text" id="amApiKey" placeholder="AIzaSy..." style="font-family:monospace">
+      <div class="row">
+        <div>
+          <label>Voice</label>
+          <select id="amVoice">
+            <option value="Schedar">Schedar (male)</option>
+            <option value="Charon">Charon (male)</option>
+            <option value="Fenrir">Fenrir (male)</option>
+            <option value="Achernar">Achernar (male)</option>
+            <option value="Aoede">Aoede (female)</option>
+            <option value="Kore">Kore (female)</option>
+            <option value="Zephyr">Zephyr (female)</option>
+            <option value="Leda">Leda (female)</option>
+          </select>
+        </div>
+        <div>
+          <label>Language / Style hint</label>
+          <input type="text" id="amLanguage" placeholder="Bengali" value="Bengali">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Chunk size (chars)</label>
+          <select id="amChunkSize">
+            <option value="600">600 (ছোট — fast)</option>
+            <option value="800" selected>800 (default)</option>
+            <option value="1000">1000 (বড়)</option>
+            <option value="1200">1200 (খুব বড়)</option>
+          </select>
+        </div>
+        <div>
+          <label>Delay between chunks (sec)</label>
+          <select id="amDelay">
+            <option value="3">3s</option>
+            <option value="5" selected>5s</option>
+            <option value="8">8s</option>
+            <option value="12">12s</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label>429 Rate limit → wait (sec)</label>
+        <select id="amRateWait">
+          <option value="65">65s</option>
+          <option value="90" selected>90s</option>
+          <option value="120">120s</option>
+          <option value="180">180s</option>
+        </select>
+      </div>
+      <button onclick="amSaveSettings()" class="btn-sm" style="margin-top:4px">💾 Save Settings</button>
+      <div id="amSaveMsg" style="font-size:.82rem;color:#4caf50;margin-top:4px"></div>
+    </div>
+
+    <div class="card">
+      <h2>📝 Script</h2>
+      <textarea id="amScript" placeholder="এখানে তোমার পুরো script paste করো। যত বড় হোক।&#10;Server নিজেই chunk করে একটার পর একটা generate করবে।&#10;Page বন্ধ থাকলেও server চালু থাকবে।" style="min-height:200px;font-size:.9rem;line-height:1.7"></textarea>
+      <div id="amScriptInfo" style="font-size:.8rem;color:#666;margin-top:-8px;margin-bottom:8px"></div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn-dub" id="amStartBtn" onclick="amStart()" style="flex:1;margin-top:0">🎙 Generate Audio</button>
+        <button id="amStopBtn" onclick="amStop()" style="display:none;flex:0 0 auto;padding:12px 20px;background:#7f1d1d;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600">🛑 Stop</button>
+      </div>
+      <div id="amProgress" style="font-size:.84rem;color:#aaa;margin-top:10px;min-height:20px"></div>
+    </div>
+
+    <!-- Live Log -->
+    <div class="card" id="amLogCard" style="display:none">
+      <h2 style="display:flex;justify-content:space-between;align-items:center">
+        <span>📡 Live Log</span>
+        <button class="btn-sm" onclick="document.getElementById('amLogBox').innerHTML=''" style="font-size:.7rem;padding:2px 8px">Clear</button>
+      </h2>
+      <div id="amChunkStatus" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <div id="amLogBox" style="background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:14px;font-family:monospace;font-size:.8rem;min-height:200px;max-height:400px;overflow-y:auto;line-height:1.65;resize:vertical"></div>
+    </div>
+
+    <!-- Output -->
+    <div class="card" id="amOutputCard" style="display:none">
+      <h2>✅ Output</h2>
+      <audio id="amAudio" controls style="width:100%;margin-bottom:10px"></audio>
+      <a id="amDownload" class="btn-dl" download="audio_output.mp3">⬇ Download MP3</a>
+    </div>
+  </div>
 
   <!-- SETUP TAB -->
   <div id="topSetup" style="display:none">
@@ -785,13 +874,21 @@ async function stopDubbing(){
     document.getElementById('dubProgress').textContent='ℹ️ কোনো active job নেই';
     return;
   }
-  document.getElementById('dubProgress').textContent='🛑 Stop করা হচ্ছে... (cooldown চললে পরমিনিটে ছাড়বে)';
+  const stopBtn = document.getElementById('dubStopBtn');
+  stopBtn.disabled = true;
+  stopBtn.textContent = '⏳ Stopping...';
+  document.getElementById('dubProgress').textContent='🛑 Stop signal পাঠানো হচ্ছে...';
   try {
     const r = await fetch(`/tts/stop/${currentJobId}`,{method:'POST'});
     if (!r.ok) throw new Error('HTTP '+r.status);
-    addTtsLog([{t:Date.now()/1000, msg:'🛑 Stop request sent', lvl:'warn'}]);
+    addTtsLog([{t:Date.now()/1000, msg:'🛑 Stop request sent — current segment শেষ হলে থামবে (max ~3s)', lvl:'warn'}]);
+    document.getElementById('dubProgress').textContent='🛑 Stop signal পাঠানো হয়েছে। থামছে...';
+    saveTtsJobId('');  // localStorage থেকে job ID মুছে দাও
   } catch(e) {
     document.getElementById('dubProgress').textContent='❌ Stop error: '+e.message;
+  } finally {
+    stopBtn.disabled = false;
+    stopBtn.textContent = '🛑 Stop';
   }
 }
 
@@ -799,12 +896,15 @@ async function stopDubbing(){
 // Tabs
 // ══════════════════════════════════════════════
 function switchTopTab(tab){
-  document.getElementById('topMain').style.display  = tab==='main'  ?'':'none';
-  document.getElementById('topSetup').style.display = tab==='setup' ?'':'none';
+  document.getElementById('topMain').style.display       = tab==='main'        ?'':'none';
+  document.getElementById('topAudioMaker').style.display = tab==='audiomaker'  ?'':'none';
+  document.getElementById('topSetup').style.display      = tab==='setup'       ?'':'none';
   document.querySelectorAll('.top-tab').forEach((b,i)=>{
-    b.classList.toggle('active',(tab==='main'&&i===0)||(tab==='setup'&&i===1));
+    b.classList.toggle('active',
+      (tab==='main'&&i===0)||(tab==='audiomaker'&&i===1)||(tab==='setup'&&i===2));
   });
   if(tab==='setup') setupLoadStatus();
+  if(tab==='audiomaker') amLoadSettings();
 }
 function dubSwitchTab(tab){
   document.getElementById('tabAuto').style.display   = tab==='auto'  ?'':'none';
@@ -970,6 +1070,221 @@ async function setupLoadStatus(){
   const box=document.getElementById('setupStatusBox');
   try{const r=await fetch('/setup/status');box.textContent=JSON.stringify(await r.json(),null,2);}
   catch(e){box.textContent='error: '+e.message;}
+}
+// ══════════════════════════════════════════════
+// AUDIO MAKER
+// ══════════════════════════════════════════════
+const AM_JOB_KEY = 'chinese_asr_am_job_id';
+let _amJobId = '';
+
+function amSaveSettings(){
+  localStorage.setItem('am_api_key',   document.getElementById('amApiKey').value.trim());
+  localStorage.setItem('am_voice',     document.getElementById('amVoice').value);
+  localStorage.setItem('am_language',  document.getElementById('amLanguage').value.trim());
+  localStorage.setItem('am_chunk',     document.getElementById('amChunkSize').value);
+  localStorage.setItem('am_delay',     document.getElementById('amDelay').value);
+  localStorage.setItem('am_rate_wait', document.getElementById('amRateWait').value);
+  const m = document.getElementById('amSaveMsg');
+  m.textContent='✅ Saved!'; setTimeout(()=>m.textContent='',2000);
+}
+function amLoadSettings(){
+  const get = (id, key, def) => {
+    const v = localStorage.getItem(key);
+    const el = document.getElementById(id);
+    if (v && el) el.value = v;
+  };
+  get('amApiKey',   'am_api_key',   '');
+  get('amVoice',    'am_voice',     'Charon');
+  get('amLanguage', 'am_language',  'Bengali');
+  get('amChunkSize','am_chunk',     '800');
+  get('amDelay',    'am_delay',     '5');
+  get('amRateWait', 'am_rate_wait', '90');
+
+  // script char count
+  const sc = document.getElementById('amScript');
+  if(sc) sc.addEventListener('input', amUpdateScriptInfo);
+  amUpdateScriptInfo();
+
+  // recover previous job
+  const savedId = localStorage.getItem(AM_JOB_KEY);
+  if(savedId) _amTryRecover(savedId);
+}
+function amUpdateScriptInfo(){
+  const sc = document.getElementById('amScript');
+  const info = document.getElementById('amScriptInfo');
+  if(!sc||!info) return;
+  const len = sc.value.length;
+  const chunk = parseInt(document.getElementById('amChunkSize')?.value||'800');
+  const chunks = len>0 ? Math.ceil(len/chunk) : 0;
+  info.textContent = len>0 ? `${len} chars → ~${chunks} chunk` : '';
+}
+
+async function _amTryRecover(jobId){
+  try{
+    const r = await fetch(`/am/job/${jobId}`);
+    if(!r.ok) return;
+    const job = await r.json();
+    document.getElementById('amLogCard').style.display='block';
+    document.getElementById('amProgress').textContent =
+      `🔄 Previous job [${jobId.slice(0,8)}] — status: ${job.status} (${job.done}/${job.total} chunks)`;
+    if(job.status==='complete'){
+      document.getElementById('amProgress').textContent='✅ Previous job complete — Download করো বা নতুন করো।';
+      _amShowOutput(jobId);
+    } else if(['running','pending'].includes(job.status)){
+      _amJobId = jobId;
+      document.getElementById('amStopBtn').style.display='block';
+      document.getElementById('amStartBtn').disabled=true;
+      _amAttachSSE(jobId);
+    }
+  }catch(e){}
+}
+
+async function amStart(){
+  const key      = document.getElementById('amApiKey').value.trim();
+  const voice    = document.getElementById('amVoice').value;
+  const language = document.getElementById('amLanguage').value.trim()||'Bengali';
+  const script   = document.getElementById('amScript').value.trim();
+  const chunkSz  = parseInt(document.getElementById('amChunkSize').value);
+  const delay    = parseInt(document.getElementById('amDelay').value);
+  const rateWait = parseInt(document.getElementById('amRateWait').value);
+
+  if(!key)    { alert('Gemini API key দাও'); return; }
+  if(!script) { alert('Script দাও'); return; }
+
+  document.getElementById('amStartBtn').disabled=true;
+  document.getElementById('amStopBtn').style.display='block';
+  document.getElementById('amLogCard').style.display='block';
+  document.getElementById('amOutputCard').style.display='none';
+  document.getElementById('amLogBox').innerHTML='';
+  document.getElementById('amChunkStatus').innerHTML='';
+  document.getElementById('amProgress').textContent='⏳ Job শুরু হচ্ছে...';
+
+  try{
+    const r = await fetch('/am/start',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({script, api_key:key, voice, language,
+                            chunk_size:chunkSz, delay_sec:delay, rate_wait_sec:rateWait})
+    });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    _amJobId = d.job_id;
+    localStorage.setItem(AM_JOB_KEY, _amJobId);
+    _amAttachSSE(_amJobId);
+  }catch(e){
+    document.getElementById('amProgress').textContent='❌ Start error: '+e.message;
+    document.getElementById('amStartBtn').disabled=false;
+    document.getElementById('amStopBtn').style.display='none';
+  }
+}
+
+function _amAttachSSE(jobId){
+  const progress  = document.getElementById('amProgress');
+  const logBox    = document.getElementById('amLogBox');
+  const statusRow = document.getElementById('amChunkStatus');
+
+  const es = new EventSource(`/am/status/${jobId}`);
+
+  es.addEventListener('log', e=>{
+    try{
+      const d = JSON.parse(e.data);
+      (d.entries||[]).forEach(entry=>{
+        const line = document.createElement('div');
+        line.className = `tlog ${entry.lvl||'info'}`;
+        const t = new Date(entry.t*1000).toLocaleTimeString();
+        line.textContent = `[${t}] ${entry.msg}`;
+        logBox.appendChild(line);
+        logBox.scrollTop = logBox.scrollHeight;
+        while(logBox.children.length>400) logBox.removeChild(logBox.firstChild);
+      });
+    }catch(_){}
+  });
+
+  es.addEventListener('progress', e=>{
+    try{
+      const d = JSON.parse(e.data);
+      const pct = d.total ? Math.round(d.done/d.total*100) : 0;
+      progress.textContent = `🔊 Chunk ${d.done}/${d.total} (${pct}%) — ${d.status||''}`;
+
+      // chunk badge update
+      if(d.total && statusRow.children.length===0){
+        for(let i=0;i<d.total;i++){
+          const b=document.createElement('span');
+          b.className='key-badge';
+          b.id=`am_chunk_${i}`;
+          b.textContent=`ch${i+1}`;
+          statusRow.appendChild(b);
+        }
+      }
+      if(typeof d.current==='number' && d.current>=0){
+        // mark previous as ok
+        for(let i=0;i<d.current;i++){
+          const b=document.getElementById(`am_chunk_${i}`);
+          if(b) b.className='key-badge ok';
+        }
+        const cb=document.getElementById(`am_chunk_${d.current}`);
+        if(cb) cb.className='key-badge trying';
+      }
+    }catch(_){}
+  });
+
+  es.addEventListener('done', async e=>{
+    es.close();
+    document.getElementById('amStopBtn').style.display='none';
+    document.getElementById('amStartBtn').disabled=false;
+    try{
+      const d = JSON.parse(e.data);
+      // mark all chunks
+      const statusRow=document.getElementById('amChunkStatus');
+      for(let i=0;i<statusRow.children.length;i++){
+        const b=document.getElementById(`am_chunk_${i}`);
+        if(b) b.className='key-badge ok';
+      }
+      if(d.status==='stopped'){
+        progress.textContent='🛑 Stopped।';
+      } else if(d.status==='complete'){
+        progress.textContent=`✅ সব ${d.total} chunk done! Audio ready।`;
+        _amShowOutput(jobId);
+        localStorage.removeItem(AM_JOB_KEY);
+      } else {
+        progress.textContent=`⚠️ Ended: ${d.status}`;
+      }
+    }catch(_){}
+  });
+
+  es.addEventListener('error', e=>{
+    es.close();
+    document.getElementById('amStopBtn').style.display='none';
+    document.getElementById('amStartBtn').disabled=false;
+    try{ progress.textContent='❌ '+JSON.parse(e.data).msg; }
+    catch{ progress.textContent='❌ SSE connection error'; }
+  });
+}
+
+function _amShowOutput(jobId){
+  const card  = document.getElementById('amOutputCard');
+  const audio = document.getElementById('amAudio');
+  const dl    = document.getElementById('amDownload');
+  const url   = `/am/output/${jobId}`;
+  audio.src   = url;
+  dl.href     = url;
+  card.style.display='block';
+  audio.load();
+}
+
+async function amStop(){
+  if(!_amJobId) return;
+  const stopBtn = document.getElementById('amStopBtn');
+  stopBtn.disabled=true; stopBtn.textContent='⏳ Stopping...';
+  document.getElementById('amProgress').textContent='🛑 Stop signal পাঠানো হচ্ছে...';
+  try{
+    await fetch(`/am/stop/${_amJobId}`,{method:'POST'});
+    localStorage.removeItem(AM_JOB_KEY);
+    document.getElementById('amProgress').textContent='🛑 Stop করা হয়েছে।';
+  }catch(e){
+    document.getElementById('amProgress').textContent='❌ Stop error: '+e.message;
+  }finally{
+    stopBtn.disabled=false; stopBtn.textContent='🛑 Stop';
+  }
 }
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
