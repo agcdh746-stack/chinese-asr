@@ -413,9 +413,14 @@ async def synthesize_segment(*, text, voice, language="Bengali",
             _log(f"[{lbl}] âŒ {klbl} error: {str(e)[:80]} â†’ 15s cooldown", "error")
             save_job(job)
 
-        # Key delay before next key (burst prevention)
+        # Key delay before next key (burst prevention) — stop check প্রতি 0.5s
         if not (job and job.get("stop_requested")):
-            await asyncio.sleep(key_delay_sec)
+            waited = 0.0
+            while waited < key_delay_sec:
+                await asyncio.sleep(0.5)
+                waited += 0.5
+                if job and job.get("stop_requested"):
+                    break
 
 
 # â”€â”€ Background Audio Ducking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1637,6 +1642,369 @@ def setup_proxy_test():
         return jsonify({"ok":ok,"ip":ip,"proxy":proxy})
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
+
+
+# ══════════════════════════════════════════════════════════════════════
+# AUDIO MAKER — single key, single voice, infinite retry, never give up
+# ══════════════════════════════════════════════════════════════════════
+
+AM_JOBS_DIR = os.path.join(TEMP_DIR, "am_jobs")
+Path(AM_JOBS_DIR).mkdir(parents=True, exist_ok=True)
+
+def _am_job_path(job_id):    return os.path.join(AM_JOBS_DIR, f"{job_id}.json")
+def _am_chunk_path(job_id, i): return os.path.join(AM_JOBS_DIR, f"{job_id}_chunk{i}.wav")
+def _am_output_path(job_id): return os.path.join(AM_JOBS_DIR, f"{job_id}_output.mp3")
+
+def am_load_job(job_id):
+    p = _am_job_path(job_id)
+    if not os.path.exists(p): return None
+    try: return json.loads(open(p).read())
+    except: return None
+
+def am_save_job(job):
+    open(_am_job_path(job["id"]), "w").write(json.dumps(job, ensure_ascii=False, indent=2))
+
+def am_log(job, msg, lvl="info"):
+    if "logs" not in job: job["logs"] = []
+    job["logs"].append({"t": round(time.time(), 2), "msg": msg, "lvl": lvl})
+    if len(job["logs"]) > 300: job["logs"] = job["logs"][-300:]
+
+def _am_chunk_text(script, chunk_size):
+    """Sentence boundary তে ভাঙো — মাঝখানে কাটবে না।"""
+    import re as _re
+    # sentence enders: ।.?! newline
+    sentences = _re.split(r'(?<=[।.?!\n])\s*', script.strip())
+    chunks, current = [], ""
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent: continue
+        if len(current) + len(sent) + 1 <= chunk_size:
+            current = (current + " " + sent).strip() if current else sent
+        else:
+            if current: chunks.append(current)
+            # single sentence longer than chunk_size → hard split
+            if len(sent) > chunk_size:
+                for i in range(0, len(sent), chunk_size):
+                    chunks.append(sent[i:i+chunk_size])
+            else:
+                current = sent
+    if current: chunks.append(current)
+    return chunks
+
+
+async def _am_generate_chunk(text, api_key, voice, language, job, chunk_label, rate_wait_sec=90):
+    """Single key, infinite retry — never give up."""
+    attempt = 0
+    while True:
+        if job.get("stop_requested"):
+            raise InterruptedError("stopped")
+
+        attempt += 1
+        am_log(job, f"[{chunk_label}] attempt #{attempt} → trying...")
+        am_save_job(job)
+
+        styled = (
+            f"<style-instruction>\n"
+            f"The following is a narration in {language} language.\n"
+            f"Read aloud in a calm, clear, natural tone.\n"
+            f"</style-instruction>\n{text}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": styled}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+            },
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key={api_key}"
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(url, json=payload)
+
+            if resp.status_code == 429:
+                am_log(job, f"[{chunk_label}] ⏳ 429 rate limit → {rate_wait_sec}s wait করছি...", "warn")
+                am_save_job(job)
+                for _ in range(rate_wait_sec):
+                    if job.get("stop_requested"): raise InterruptedError("stopped")
+                    await asyncio.sleep(1)
+                am_log(job, f"[{chunk_label}] 🔄 Wait শেষ → আবার চেষ্টা...", "info")
+                continue
+
+            if resp.status_code in (401, 403):
+                am_log(job, f"[{chunk_label}] 💀 HTTP {resp.status_code} — invalid API key!", "error")
+                raise RuntimeError(f"invalid_key_{resp.status_code}")
+
+            if resp.status_code >= 500:
+                am_log(job, f"[{chunk_label}] ❌ Server error {resp.status_code} → 30s wait...", "warn")
+                await asyncio.sleep(30)
+                continue
+
+            resp.raise_for_status()
+
+            b64 = (
+                resp.json().get("candidates", [{}])[0]
+                .get("content", {}).get("parts", [{}])[0]
+                .get("inlineData", {}).get("data")
+            )
+            if not b64:
+                am_log(job, f"[{chunk_label}] ⚠️ Empty audio response → retry...", "warn")
+                await asyncio.sleep(5)
+                continue
+
+            pcm = base64.b64decode(b64)
+            am_log(job, f"[{chunk_label}] ✅ Done ({len(pcm)//1024}KB)", "success")
+            return pcm
+
+        except InterruptedError:
+            raise
+        except httpx.TimeoutException:
+            am_log(job, f"[{chunk_label}] ⏱ Timeout → retry...", "warn")
+            await asyncio.sleep(10)
+        except RuntimeError:
+            raise
+        except Exception as e:
+            am_log(job, f"[{chunk_label}] ❌ {str(e)[:80]} → 15s wait...", "warn")
+            await asyncio.sleep(15)
+
+
+def _run_am_job(job_id):
+    job = am_load_job(job_id)
+    if not job: return
+
+    job["status"]     = "running"
+    job["started_at"] = time.time()
+    am_log(job, f"🚀 Audio Maker শুরু — {job['total']} chunks, voice={job['voice']}")
+    am_save_job(job)
+
+    api_key    = job["api_key"]
+    voice      = job["voice"]
+    language   = job.get("language", "Bengali")
+    chunks     = job["chunks"]
+    delay_sec  = int(job.get("delay_sec", 5))
+    rate_wait  = int(job.get("rate_wait_sec", 90))
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        for i, chunk_text in enumerate(chunks):
+            # reload for stop check
+            job = am_load_job(job_id)
+            if not job: return
+            if job.get("stop_requested"):
+                am_log(job, "🛑 Stopped by user", "warn")
+                job["status"] = "stopped"
+                am_save_job(job); return
+
+            wav_path = _am_chunk_path(job_id, i)
+
+            # resume: file exists?
+            if os.path.exists(wav_path) and os.path.getsize(wav_path) > 200:
+                job["done"]    = i + 1
+                job["current"] = i
+                am_log(job, f"[chunk{i+1}] ⏭ Resume — file exists")
+                am_save_job(job)
+                continue
+
+            job["current"] = i
+            am_log(job, f"[chunk{i+1}/{job['total']}] 📝 \"{chunk_text[:50]}...\"")
+            am_save_job(job)
+
+            try:
+                pcm = loop.run_until_complete(
+                    _am_generate_chunk(chunk_text, api_key, voice, language,
+                                       job, f"chunk{i+1}", rate_wait)
+                )
+                # pcm → wav save
+                wav_bytes = pcm_to_wav(pcm)
+                with open(wav_path, "wb") as f: f.write(wav_bytes)
+
+                job = am_load_job(job_id)
+                job["done"]    = i + 1
+                job["current"] = i
+                am_save_job(job)
+
+            except InterruptedError:
+                job = am_load_job(job_id) or job
+                job["status"] = "stopped"
+                am_log(job, "🛑 Stopped", "warn")
+                am_save_job(job); return
+            except RuntimeError as e:
+                job = am_load_job(job_id) or job
+                job["status"] = "error"
+                job["error"]  = str(e)
+                am_log(job, f"💀 Fatal: {e}", "error")
+                am_save_job(job); return
+
+            # inter-chunk delay
+            if i < len(chunks) - 1:
+                am_log(job, f"[chunk{i+1}] ⏳ {delay_sec}s delay before next chunk...")
+                for _ in range(delay_sec):
+                    job = am_load_job(job_id)
+                    if job and job.get("stop_requested"): break
+                    loop.run_until_complete(asyncio.sleep(1))
+
+        # ── Concat all WAVs → MP3 ──
+        job = am_load_job(job_id)
+        am_log(job, f"🎛 সব chunk ready → FFmpeg concat করছি...", "info")
+        am_save_job(job)
+
+        wav_list = []
+        for i in range(len(chunks)):
+            p = _am_chunk_path(job_id, i)
+            if os.path.exists(p) and os.path.getsize(p) > 200:
+                wav_list.append(p)
+
+        if not wav_list:
+            raise RuntimeError("No WAV files to concat")
+
+        # concat list file
+        list_path = os.path.join(AM_JOBS_DIR, f"{job_id}_list.txt")
+        with open(list_path, "w") as f:
+            for p in wav_list:
+                f.write(f"file '{p}'\n")
+
+        out_mp3 = _am_output_path(job_id)
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", list_path,
+            "-ar", "24000", "-ac", "1", "-b:a", "192k",
+            out_mp3
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        try: os.unlink(list_path)
+        except: pass
+
+        job = am_load_job(job_id)
+        job["status"]    = "complete"
+        job["output_mp3"] = out_mp3
+        am_log(job, f"🎉 Done! Output: {os.path.getsize(out_mp3)//1024}KB MP3", "success")
+        am_save_job(job)
+
+    except Exception as e:
+        job = am_load_job(job_id) or job
+        job["status"] = "error"
+        job["error"]  = str(e)
+        am_log(job, f"❌ Fatal: {e}", "error")
+        am_save_job(job)
+    finally:
+        loop.close()
+
+
+@app.route("/am/start", methods=["POST"])
+def am_start():
+    data        = request.get_json(force=True)
+    script      = (data.get("script") or "").strip()
+    api_key     = (data.get("api_key") or "").strip()
+    voice       = data.get("voice", "Charon")
+    language    = data.get("language", "Bengali")
+    chunk_size  = int(data.get("chunk_size", 800))
+    delay_sec   = int(data.get("delay_sec", 5))
+    rate_wait   = int(data.get("rate_wait_sec", 90))
+
+    if not script:  return jsonify({"error": "script required"}), 400
+    if not api_key: return jsonify({"error": "api_key required"}), 400
+
+    chunks = _am_chunk_text(script, chunk_size)
+    if not chunks: return jsonify({"error": "no chunks generated"}), 400
+
+    job_id = "am_" + uuid.uuid4().hex[:10]
+    job = {
+        "id":            job_id,
+        "status":        "pending",
+        "created_at":    time.time(),
+        "api_key":       api_key,
+        "voice":         voice,
+        "language":      language,
+        "chunk_size":    chunk_size,
+        "delay_sec":     delay_sec,
+        "rate_wait_sec": rate_wait,
+        "chunks":        chunks,
+        "total":         len(chunks),
+        "done":          0,
+        "current":       -1,
+        "stop_requested": False,
+        "logs":          [],
+    }
+    am_save_job(job)
+    threading.Thread(target=_run_am_job, args=(job_id,), daemon=True).start()
+    return jsonify({"job_id": job_id, "total_chunks": len(chunks)})
+
+
+@app.route("/am/stop/<job_id>", methods=["POST"])
+def am_stop(job_id):
+    job = am_load_job(job_id)
+    if not job: return jsonify({"error": "not found"}), 404
+    job["stop_requested"] = True
+    am_log(job, "🛑 Stop requested by user", "warn")
+    am_save_job(job)
+    return jsonify({"ok": True})
+
+
+@app.route("/am/status/<job_id>")
+def am_status(job_id):
+    def generate():
+        last_done    = -1
+        last_log_len = 0
+        while True:
+            job = am_load_job(job_id)
+            if not job:
+                yield f"event: error\ndata: {json.dumps({'msg':'job not found'})}\n\n"
+                return
+
+            done   = job.get("done", 0)
+            total  = job.get("total", 1)
+            curr   = job.get("current", -1)
+            status = job.get("status", "")
+            logs   = job.get("logs", [])
+
+            # new logs
+            if len(logs) > last_log_len:
+                new_logs = logs[last_log_len:]
+                last_log_len = len(logs)
+                yield f"event: log\ndata: {json.dumps({'entries': new_logs}, ensure_ascii=False)}\n\n"
+
+            if done != last_done or status in ("complete","error","stopped"):
+                yield (
+                    f"event: progress\n"
+                    f"data: {json.dumps({'done':done,'total':total,'current':curr,'status':status}, ensure_ascii=False)}\n\n"
+                )
+                last_done = done
+
+            if status in ("complete", "error", "stopped"):
+                yield (
+                    f"event: done\n"
+                    f"data: {json.dumps({'status':status,'done':done,'total':total}, ensure_ascii=False)}\n\n"
+                )
+                return
+
+            time.sleep(1.5)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/am/job/<job_id>")
+def am_job_get(job_id):
+    job = am_load_job(job_id)
+    if not job: return jsonify({"error": "not found"}), 404
+    safe = {k: v for k, v in job.items() if k not in ("api_key", "chunks")}
+    return jsonify(safe)
+
+
+@app.route("/am/output/<job_id>")
+def am_output(job_id):
+    out = _am_output_path(job_id)
+    if not os.path.exists(out): return jsonify({"error": "output not ready"}), 404
+    return send_from_directory(AM_JOBS_DIR, f"{job_id}_output.mp3",
+                               mimetype="audio/mpeg",
+                               as_attachment=True,
+                               download_name="audio_output.mp3")
+
 
 if __name__=="__main__":
     port=int(os.environ.get("PORT",3000))
