@@ -450,8 +450,14 @@ window.onload = async () => {
 
         if (['pending','running'].includes(job.status)) {
           // Job still running on backend — re-attach SSE
+          // tab switch করো main-এ যাতে UI দেখা যায়
+          switchTopTab('main');
           addTtsLog([{t:Date.now()/1000, msg:'🔌 Re-attaching to live job after page refresh...', lvl:'info'}]);
           currentJobId = savedId;
+          // UI দেখাও
+          document.getElementById('dubBtn').style.display = 'none';
+          document.getElementById('dubStopBtn').style.display = 'block';
+          document.getElementById('dubVideoWrap').style.display = 'none';
           _reattachSSE(savedId, job.logs ? job.logs.length : 0);
         } else if (job.status === 'stopped' || (job.status === 'complete' && job.done < job.total)) {
           document.getElementById('dubResumeBtn').style.display = 'inline-block';
