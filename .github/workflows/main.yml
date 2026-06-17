@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - main
-
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,7 +21,7 @@ jobs:
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
