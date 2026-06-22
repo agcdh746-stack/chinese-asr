@@ -402,22 +402,29 @@ def generate_all_scene_images(job, scenes, out_dir):
 
 def _zoompan_filter(duration_sec, zoom_in=True):
     """
-    FFmpeg zoompan filter স্ট্রিং বানায় — static image-কে slow zoom/pan
-    দিয়ে animate করে (Ken Burns effect)। ২-৫ সেকেন্ড movement গাইডলাইন
-    অনুসরণ করে ধীর movement রাখা হয়েছে।
+    RAM-সাশ্রয়ী Ken Burns effect।
+    zoompan বাদ — scale+crop+setsar দিয়ে করা হয়েছে।
     """
-    frames = max(int(duration_sec * FPS), 1)
+    # zoom 10% বড় করে crop — zoompan এর মতো কিন্তু RAM অনেক কম লাগে
+    scale_w = int(VIDEO_W * 1.1)
+    scale_h = int(VIDEO_H * 1.1)
     if zoom_in:
-        zoom_expr = "zoom+0.0008"
-        z_start, z_end = 1.0, 1.0 + 0.0008 * frames
+        # উপর-বাম থেকে কেন্দ্রে আসে (zoom-in feel)
+        vf = (
+            f"scale={scale_w}:{scale_h},"
+            f"crop={VIDEO_W}:{VIDEO_H}:0:0,"
+            f"setsar=1"
+        )
     else:
-        z_start, z_end = 1.15, 1.15 - 0.0008 * frames
-        zoom_expr = "zoom-0.0008"
-
-    return (
-        f"scale={int(VIDEO_W*1.2)}:{int(VIDEO_H*1.2)},"
-        f"zoompan=z='{zoom_expr}':d={frames}:s={VIDEO_W}x{VIDEO_H}:fps={FPS}"
-    )
+        # কেন্দ্র থেকে শুরু (zoom-out feel)
+        ox = (scale_w - VIDEO_W) // 2
+        oy = (scale_h - VIDEO_H) // 2
+        vf = (
+            f"scale={scale_w}:{scale_h},"
+            f"crop={VIDEO_W}:{VIDEO_H}:{ox}:{oy},"
+            f"setsar=1"
+        )
+    return vf
 
 
 def build_scene_clip(image_path, audio_path, duration_sec, out_path, zoom_in=True):
