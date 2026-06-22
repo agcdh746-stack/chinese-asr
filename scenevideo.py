@@ -291,11 +291,31 @@ def split_audio_by_silence(wav_path, expected_scene_count, out_dir):
         scenes_out.append((start, end))
 
     if len(scenes_out) != expected_scene_count:
-        raise RuntimeError(
-            f"silence-split mismatch: {len(scenes_out)} অংশ পাওয়া গেছে কিন্তু "
-            f"{expected_scene_count} scene আশা করা হয়েছিল। (audio দৈর্ঘ্য={total_dur:.2f}s) "
-            f"script-এর scene-গুলোর মাঝে break ঠিকভাবে কাজ করেনি হয়তো।"
+        print(
+            f"[scenevideo] ⚠️ silence-split mismatch: {len(scenes_out)} অংশ পাওয়া গেছে, "
+            f"{expected_scene_count} দরকার ছিল। Auto-adjust করা হচ্ছে...", flush=True
         )
+        if len(scenes_out) == 0:
+            # কোনো silence নেই — পুরো audio সমান ভাগে ভাগ করো
+            chunk = total_dur / expected_scene_count
+            scenes_out = [(i * chunk, (i + 1) * chunk) for i in range(expected_scene_count)]
+        elif len(scenes_out) > expected_scene_count:
+            # বেশি অংশ — শেষেরগুলো merge করো যতক্ষণ না মেলে
+            while len(scenes_out) > expected_scene_count:
+                # সবচেয়ে ছোট দুটো পাশাপাশি segment merge করো
+                min_idx = min(range(len(scenes_out) - 1),
+                              key=lambda i: (scenes_out[i][1] - scenes_out[i][0]) +
+                                            (scenes_out[i+1][1] - scenes_out[i+1][0]))
+                merged = (scenes_out[min_idx][0], scenes_out[min_idx + 1][1])
+                scenes_out = scenes_out[:min_idx] + [merged] + scenes_out[min_idx + 2:]
+        else:
+            # কম অংশ — সবচেয়ে বড় segment ভাগ করো যতক্ষণ না মেলে
+            while len(scenes_out) < expected_scene_count:
+                max_idx = max(range(len(scenes_out)),
+                              key=lambda i: scenes_out[i][1] - scenes_out[i][0])
+                s, e = scenes_out[max_idx]
+                mid = (s + e) / 2
+                scenes_out = scenes_out[:max_idx] + [(s, mid), (mid, e)] + scenes_out[max_idx + 1:]
 
     results = []
     for idx, (start, end) in enumerate(scenes_out):
@@ -395,7 +415,7 @@ def _zoompan_filter(duration_sec, zoom_in=True):
         zoom_expr = "zoom-0.0008"
 
     return (
-        f"scale={VIDEO_W*2}:{VIDEO_H*2},"
+        f"scale={int(VIDEO_W*1.2)}:{int(VIDEO_H*1.2)},"
         f"zoompan=z='{zoom_expr}':d={frames}:s={VIDEO_W}x{VIDEO_H}:fps={FPS}"
     )
 
