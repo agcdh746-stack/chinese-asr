@@ -32,6 +32,7 @@ RUN ARCH=$(dpkg --print-architecture) \
 WORKDIR /app
 COPY ks-downloader ./ks-downloader
 COPY app.py ./
+COPY scenevideo.py ./
 COPY templates ./templates
 
 RUN mkdir -p /tmp/asr /app/data/cookies /app/data /app/ks-downloader/Volume
