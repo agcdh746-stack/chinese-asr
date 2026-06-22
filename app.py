@@ -6,11 +6,16 @@ import httpx
 import edge_tts
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_from_directory
 
+# ─── SCENEVIDEO INTEGRATION ──────────────────────────────────────────
+from scenevideo import register_scenevideo_routes  # new
+
 app = Flask(__name__)
 
-# â”€â”€â”€ Global JSON error handler (V6) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# Frontend "Unexpected token '<'" error à¦¹à¦¯à¦¼ à¦¯à¦–à¦¨ route exception throw à¦•à¦°à§‡
-# à¦à¦¬à¦‚ Flask default HTML error page à¦«à§‡à¦°à¦¤ à¦ªà¦¾à¦ à¦¾à¦¯à¦¼à¥¤ à¦à¦–à¦¨ à¦¸à¦¬ error JSON-à¦ à¦¯à¦¾à¦¬à§‡à¥¤
+# ─── REGISTER SCENEVIDEO ROUTES ──────────────────────────────────────
+register_scenevideo_routes(app)  # new
+
+
+# ─── Global JSON error handler (V6) ──────────────────────────────────
 import traceback as _traceback
 from werkzeug.exceptions import HTTPException as _HTTPException
 
@@ -31,7 +36,6 @@ def _json_any_err(e):
         "type":   type(e).__name__,
         "detail": str(e)[:500],
     }), 500
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 TEMP_DIR     = os.environ.get("TEMP_DIR", "/tmp/asr")
@@ -43,9 +47,9 @@ YTDLP_PROXY  = os.environ.get("YTDLP_PROXY", "").strip()
 
 Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-# TTS JOB SYSTEM â€” zip à¦à¦° à¦¸à¦¬ features
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
+# TTS JOB SYSTEM — zip এর সব features
+# ──────────────────────────────────────────────────────────────────────
 
 JOBS_DIR  = os.path.join(TEMP_DIR, "tts_jobs")
 CACHE_DIR = os.path.join(TEMP_DIR, "tts_cache")   # SHA256 cache
@@ -59,7 +63,7 @@ GEMINI_TTS_URL_TMPL = (
     "{model}:generateContent?key={key}"
 )
 
-# â”€â”€ Job file helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Job file helpers ────────────────────────────────────────────────
 def _job_path(job_id):    return os.path.join(JOBS_DIR, f"{job_id}.json")
 def _seg_wav_path(job_id, idx): return os.path.join(JOBS_DIR, f"{job_id}_seg{idx}.wav")
 
@@ -77,7 +81,7 @@ def job_log(job, msg, lvl="info"):
     job["logs"].append({"t": round(time.time(), 2), "msg": msg, "lvl": lvl})
     if len(job["logs"]) > 200: job["logs"] = job["logs"][-200:]
 
-# â”€â”€ PCM â†’ WAV â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── PCM → WAV ────────────────────────────────────────────────────────
 def pcm_to_wav(pcm, sample_rate=24000):
     nc=1; bps=16; data_size=len(pcm)
     header = struct.pack(
@@ -88,7 +92,7 @@ def pcm_to_wav(pcm, sample_rate=24000):
     )
     return header + pcm
 
-# â”€â”€ SHA256 Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── SHA256 Cache ────────────────────────────────────────────────────
 def _cache_key(text, voice, language, model=None):
     data = json.dumps({"text":text,"voice":voice,"language":language,
                        "model": model or GEMINI_TTS_MODEL}, sort_keys=True)
@@ -103,7 +107,7 @@ def _cache_set(key, wav_path):
     try: shutil.copy2(wav_path, dst)
     except: pass
 
-# â”€â”€ Silence removal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Silence removal ─────────────────────────────────────────────────
 def remove_silence(wav_path):
     fd, tmp = tempfile.mkstemp(suffix=".wav"); os.close(fd)
     try:
@@ -117,14 +121,14 @@ def remove_silence(wav_path):
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
 
-# â”€â”€ concat_close_transcripts (zip à¦à¦° à¦®à¦¤à§‹) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── concat_close_transcripts (zip এর মত) ──────────────────────────
 def concat_close_transcripts(segments, threshold=2.0, max_chunk_sec=15):
     """
-    BUG FIX: à¦†à¦—à§‡ MAX_DUR=120s + factor=2 â†’ à¦¸à¦¬ segments 1-à¦ merge à¦¹à¦¯à¦¼à§‡ "1/1 done"à¥¤
-    à¦à¦–à¦¨ max 15s, threshold doubling à¦¨à¦¾à¦‡à¥¤ Default-à¦ OFF (worker check à¦•à¦°à§‡)à¥¤
+    BUG FIX: আগে MAX_DUR=120s + factor=2 → সব segments 1-এ merge হতো "1/1 done"।
+    এখন max 15s, threshold doubling নাই। Default-এ OFF (worker check করে)।
 
-    Enhancement: TTS-à¦•à§‡ natural pause à¦¨à¦¿à¦¤à§‡ à¦¬à¦²à¦¾à¦° à¦œà¦¨à§à¦¯ merge-à¦
-    "(pause for N seconds)" text inject à¦•à¦°à§‡ (zip reference à¦¥à§‡à¦•à§‡)à¥¤
+    Enhancement: TTS-কে natural pause নিতে বলার জন্য merge-এ
+    "(pause for N seconds)" text inject করে (zip reference থেকে)।
     """
     if not segments: return []
     result = [dict(segments[0])]
@@ -135,7 +139,6 @@ def concat_close_transcripts(segments, threshold=2.0, max_chunk_sec=15):
         if diff <= threshold and merged_dur <= max_chunk_sec:
             pause_sec = max(0, int(round(diff)))
             prev["end"]  = curr["end"]
-            # TTS-à¦•à§‡ pause à¦¨à¦¿à¦¤à§‡ à¦¬à¦²à§‹; à¦ªà¦¾à¦¶à¦¾à¦ªà¦¾à¦¶à¦¿ text-à¦“ à¦¯à§à¦•à§à¦¤ à¦•à¦°à§‹
             if pause_sec >= 1:
                 prev["text"] += f"\n(pause for {pause_sec} seconds)\n{curr['text']}"
             else:
@@ -144,7 +147,7 @@ def concat_close_transcripts(segments, threshold=2.0, max_chunk_sec=15):
             result.append(dict(curr))
     return result
 
-# â”€â”€ Gemini TTS (style prompt à¦¸à¦¹) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Gemini TTS (style prompt সহ) ──────────────────────────────────
 async def _gemini_tts_call(text, voice, api_key, language="Bengali", model=None):
     model = model or GEMINI_TTS_MODEL
     styled = (
@@ -175,7 +178,7 @@ async def _gemini_tts_call(text, voice, api_key, language="Bengali", model=None)
         if not b64: raise ValueError("Gemini returned no audio data")
         return base64.b64decode(b64)
 
-# â”€â”€ Edge-TTS fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Edge-TTS fallback ─────────────────────────────────────────────
 async def _edge_tts_call(text, voice="bn-IN-TanishaaNeural", pitch="-5Hz", rate="+12%"):
     fd, mp3 = tempfile.mkstemp(suffix=".mp3"); os.close(fd)
     wav = None
@@ -194,7 +197,7 @@ async def _edge_tts_call(text, voice="bn-IN-TanishaaNeural", pitch="-5Hz", rate=
                 try: os.unlink(p)
                 except: pass
 
-# â”€â”€ Gemini voice gender mapping (Edge fallback voice matching) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Gemini voice gender mapping (Edge fallback voice matching) ────
 GEMINI_MALE_VOICES = {"Schedar","Algenib","Charon","Fenrir","Iapetus","Orus","Achird",
                      "Alnilam","Gacrux","Achernar","Puck","Enceladus","Umbriel",
                      "Algieba","Rasalgethi","Sadaltager","Zubenelgenubi"}
@@ -212,55 +215,48 @@ def pick_edge_voice(gemini_voice, user_choice="auto"):
     return EDGE_VOICE_FEMALE
 
 
-# â”€â”€ SMART KEY POOL: per-key cooldown timer, RPM counter, healthy-first â”€â”€
+# ─── SMART KEY POOL: per-key cooldown timer, RPM counter, healthy-first ──
 def _init_key_pool(job, n_keys):
-    """Job dict-à¦ key pool state initialize à¦•à¦°à§‡ (idempotent)."""
     if "key_pool" not in job or len(job.get("key_pool", [])) != n_keys:
         job["key_pool"] = [
             {"idx": i, "cooldown_until": 0.0, "rpm_count": 0,
              "rpm_window_start": time.time(),
              "total_ok": 0, "total_429": 0, "total_err": 0,
-             "consecutive_429": 0,    # for exponential backoff
-             "permanently_dead": False, # 403/invalid key
+             "consecutive_429": 0,
+             "permanently_dead": False,
              "last_status": "ready"}
             for i in range(n_keys)
         ]
     else:
-        # Migrate older pool entries to ensure new fields exist
         for k in job["key_pool"]:
             k.setdefault("consecutive_429", 0)
             k.setdefault("permanently_dead", False)
 
 def _pick_healthy_key(job, now):
-    """Return key info of next healthy key (excludes dead keys), or None."""
     pool = job["key_pool"]
-    # RPM window reset (60s)
     for k in pool:
         if now - k["rpm_window_start"] >= 60:
             k["rpm_window_start"] = now
             k["rpm_count"] = 0
-    # Healthy = not dead AND cooldown expired
     healthy = [k for k in pool if not k.get("permanently_dead") and k["cooldown_until"] <= now]
     if not healthy:
         return None
-    # Smart priority: fewer recent calls â†’ ones that have had successes â†’ lowest idx
     healthy.sort(key=lambda k: (k["rpm_count"], -k["total_ok"], k["idx"]))
     return healthy[0]
 
 def _next_cooldown_eta(job, now):
-    """à¦•à¦–à¦¨ à¦•à§‹à¦¨à§‹ (alive) key healthy à¦¹à¦¬à§‡ â€” à¦¸à¦¬à¦šà§‡à¦¯à¦¼à§‡ à¦•à¦¾à¦›à§‡à¦° timeà¥¤"""
     pool = job["key_pool"]
     alive = [k for k in pool if not k.get("permanently_dead")]
     if not alive:
-        return -1  # all keys dead
+        return -1
     futures = [k["cooldown_until"] - now for k in alive if k["cooldown_until"] > now]
-    return max(0, int(min(futures))) if futures else 0
+    return max(, int(min(futures))) if futures else 0
 
 def _alive_keys_count(job):
     return sum(1 for k in job.get("key_pool", []) if not k.get("permanently_dead"))
 
 
-# â”€â”€ synthesize_segment: SMART POOL + INFINITE RETRY + KEY DELAY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── synthesize_segment: SMART POOL + INFINITE RETRY + KEY DELAY ──
 async def synthesize_segment(*, text, voice, language="Bengali",
                               gemini_keys, edge_pitch="-5Hz", edge_rate="+12%",
                               edge_voice="auto", gemini_only=True,
@@ -270,13 +266,13 @@ async def synthesize_segment(*, text, voice, language="Bengali",
                               rpm_limit=15):
     """
     V3 STRATEGY:
-      â€¢ Smart pool: healthy keys first, 429 à¦¹à¦¿à¦Ÿ key 5min cooldown
-      â€¢ Key-à¦à¦° à¦®à¦¾à¦à§‡ 2s delay (burst rate-limit à¦à¦¡à¦¼à¦¾à¦¨à§‹)
-      â€¢ RPM tracking (default 15/min Gemini limit)
-      â€¢ 429 â†’ à¦“à¦‡ key 300s cooldown à¦¤à§‡ à¦¯à¦¾à¦¬à§‡ â†’ à¦…à¦¨à§à¦¯ healthy key à¦šà§‡à¦·à§à¦Ÿà¦¾
-      â€¢ à¦¸à¦¬ key cooling â†’ à¦¤à¦–à¦¨ cooldown ETA wait à¦•à¦°à§‡ retry
-      â€¢ 3+ round-à¦ backup model (gemini-2.5-pro-preview-tts) alternately
-      â€¢ gemini_only=True â†’ infinite retry, never Edge
+      • Smart pool: healthy keys first, 429 hit key 5min cooldown
+      • Key-এর মাঝে 2s delay (burst rate-limit এড়ানো)
+      • RPM tracking (default 15/min Gemini limit)
+      • 429 → ওই key 300s cooldown এ যাবে → অন্য healthy key চেষ্টা
+      • সব key cooling → তখন cooldown ETA wait করে retry
+      • 3+ round-এ backup model (gemini-2.5-pro-preview-tts) alternately
+      • gemini_only=True → infinite retry, never Edge
     """
     def _log(msg, lvl="info"):
         if job is not None: job_log(job, msg, lvl)
@@ -290,13 +286,13 @@ async def synthesize_segment(*, text, voice, language="Bengali",
             ck = _cache_key(text, voice, language, mdl)
             cached = _cache_get(ck)
             if cached:
-                _log(f"[{lbl}] ðŸ’¾ Cache hit â€” API skip", "success")
+                _log(f"[{lbl}] 💾 Cache hit — API skip", "success")
                 with open(cached,"rb") as f: wav_bytes = f.read()
                 return wav_bytes[44:], "cache"
 
-    # ---- No keys â†’ Edge (or user explicitly chose Edge) ----
+    # ---- No keys → Edge (or user explicitly chose Edge) ----
     if not gemini_keys:
-        _log(f"[{lbl}] ðŸŽ™ Edge-TTS ({ev})")
+        _log(f"[{lbl}] 🎙 Edge-TTS ({ev})")
         pcm = await _edge_tts_call(text, voice=ev, pitch=edge_pitch, rate=edge_rate)
         return pcm, f"edge({ev})"
 
@@ -316,11 +312,10 @@ async def synthesize_segment(*, text, voice, language="Bengali",
         if kinfo is None:
             alive_n = _alive_keys_count(job)
             if alive_n == 0:
-                # à¦¸à¦¬ key DEAD â€” Gemini-only mode-à¦ à¦à¦Ÿà¦¾ fatal
-                _log(f"[{lbl}] ðŸ’€ à¦¸à¦¬ {len(gemini_keys)}à¦Ÿà¦¾ key permanently dead â€” job à¦¥à¦¾à¦®à¦›à§‡", "error")
+                _log(f"[{lbl}] 💀 সব {len(gemini_keys)}টা key permanently dead — job থামছে", "error")
                 raise RuntimeError("all_keys_dead")
             eta = _next_cooldown_eta(job, now)
-            _log(f"[{lbl}] ðŸ”´ {alive_n}à¦Ÿà¦¿ alive key à¦¸à¦¬ cooldown-à¦ â€” {eta}s à¦…à¦ªà§‡à¦•à§à¦·à¦¾â€¦", "warn")
+            _log(f"[{lbl}] 🔴 {alive_n}টি alive key সব cooldown-এ — {eta}s অপেক্ষা…", "warn")
             for _ in range(max(1, eta)):
                 if job and job.get("stop_requested"): raise InterruptedError("stopped")
                 await asyncio.sleep(1)
@@ -332,37 +327,31 @@ async def synthesize_segment(*, text, voice, language="Bengali",
         key  = gemini_keys[ki]
         klbl = f"key#{ki+1}"
 
-        # Avoid trying same key twice in same round
         if ki in keys_tried_this_round:
-            # All healthy keys exhausted this round â€” small pause, new round
             keys_tried_this_round.clear()
             round_num += 1
             await asyncio.sleep(0.5)
             continue
         keys_tried_this_round.add(ki)
 
-        # Backup model alternation (round-based, not key-based)
         use_backup = (round_num >= backup_after_rounds and round_num % 2 == 1)
         cur_model  = GEMINI_TTS_BACKUP_MODEL if use_backup else GEMINI_TTS_MODEL
         mdl_lbl    = "backup" if use_backup else "main"
 
-        # RPM check
         kinfo["rpm_count"] += 1
-        _log(f"[{lbl}] ðŸ”‘ {klbl} ({mdl_lbl}) RPM:{kinfo['rpm_count']}/{rpm_limit} â†’ trying (r{round_num+1})...")
+        _log(f"[{lbl}] 🔑 {klbl} ({mdl_lbl}) RPM:{kinfo['rpm_count']}/{rpm_limit} → trying (r{round_num+1})...")
         kinfo["last_status"] = "trying"
         save_job(job)
 
         try:
             pcm = await _gemini_tts_call(text, voice, key, language, model=cur_model)
-            # â”€â”€â”€ SUCCESS: reset cooldown + backoff counter â”€â”€â”€
             kinfo["total_ok"]        += 1
             kinfo["last_status"]      = "ok"
-            kinfo["cooldown_until"]   = 0.0   # immediately healthy
-            kinfo["consecutive_429"]  = 0     # reset exponential backoff
-            _log(f"[{lbl}] âœ… {klbl} OK ({mdl_lbl}) â€” total_ok:{kinfo['total_ok']}, 429s:{kinfo['total_429']}", "success")
+            kinfo["cooldown_until"]   = 0.0
+            kinfo["consecutive_429"]  = 0
+            _log(f"[{lbl}] ✅ {klbl} OK ({mdl_lbl}) — total_ok:{kinfo['total_ok']}, 429s:{kinfo['total_429']}", "success")
             save_job(job)
 
-            # Cache save
             ck = _cache_key(text, voice, language, cur_model)
             fd, tw = tempfile.mkstemp(suffix=".wav"); os.close(fd)
             with open(tw,"wb") as f: f.write(pcm_to_wav(pcm))
@@ -375,34 +364,30 @@ async def synthesize_segment(*, text, voice, language="Bengali",
         except httpx.HTTPStatusError as e:
             code = e.response.status_code
             if code == 429:
-                # â”€â”€ ADAPTIVE EXPONENTIAL BACKOFF: 60 â†’ 120 â†’ 240 â†’ cap 300 â”€â”€
                 kinfo["total_429"]       += 1
                 kinfo["consecutive_429"] += 1
                 cn = kinfo["consecutive_429"]
-                adaptive_cd = min(300, 60 * (2 ** (cn - 1)))   # 60,120,240,300,300...
+                adaptive_cd = min(300, 60 * (2 ** (cn - 1)))
                 kinfo["cooldown_until"]   = time.time() + adaptive_cd
                 kinfo["last_status"]      = "limited"
-                _log(f"[{lbl}] â³ {klbl} â†’ 429 â†’ {adaptive_cd}s cooldown "
+                _log(f"[{lbl}] ⏳ {klbl} → 429 → {adaptive_cd}s cooldown "
                      f"(consecutive:{cn}, 429s:{kinfo['total_429']})", "warn")
             elif code in (401, 403):
-                # â”€â”€ PERMANENT: invalid/forbidden API key â†’ remove from pool â”€â”€
                 kinfo["total_err"]       += 1
                 kinfo["permanently_dead"] = True
                 kinfo["last_status"]      = f"DEAD_{code}"
-                _log(f"[{lbl}] ðŸ’€ {klbl} HTTP {code} â†’ permanently removed from pool "
+                _log(f"[{lbl}] 💀 {klbl} HTTP {code} → permanently removed from pool "
                      f"(invalid/forbidden key)", "error")
             elif code in (400, 404):
-                # â”€â”€ Likely model/request issue â€” also remove from pool â”€â”€
                 kinfo["total_err"]       += 1
                 kinfo["permanently_dead"] = True
                 kinfo["last_status"]      = f"DEAD_{code}"
-                _log(f"[{lbl}] ðŸ’€ {klbl} HTTP {code} â†’ permanently removed (bad request)", "error")
+                _log(f"[{lbl}] 💀 {klbl} HTTP {code} → permanently removed (bad request)", "error")
             else:
-                # 5xx / transient â€” short cooldown
                 kinfo["total_err"]       += 1
                 kinfo["cooldown_until"]   = time.time() + 30
                 kinfo["last_status"]      = f"http_{code}"
-                _log(f"[{lbl}] âŒ {klbl} HTTP {code} â†’ 30s cooldown", "error")
+                _log(f"[{lbl}] ❌ {klbl} HTTP {code} → 30s cooldown", "error")
             save_job(job)
         except InterruptedError:
             raise
@@ -410,10 +395,9 @@ async def synthesize_segment(*, text, voice, language="Bengali",
             kinfo["total_err"] += 1
             kinfo["cooldown_until"] = time.time() + 15
             kinfo["last_status"] = "error"
-            _log(f"[{lbl}] âŒ {klbl} error: {str(e)[:80]} â†’ 15s cooldown", "error")
+            _log(f"[{lbl}] ❌ {klbl} error: {str(e)[:80]} → 15s cooldown", "error")
             save_job(job)
 
-        # Key delay before next key (burst prevention) — stop check প্রতি 0.5s
         if not (job and job.get("stop_requested")):
             waited = 0.0
             while waited < key_delay_sec:
@@ -423,16 +407,14 @@ async def synthesize_segment(*, text, voice, language="Bengali",
                     break
 
 
-# â”€â”€ Background Audio Ducking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Background Audio Ducking ─────────────────────────────────────
 def _probe_mean_volume_db(path):
-    """ffmpeg volumedetect à¦¦à¦¿à¦¯à¦¼à§‡ mean volume (dB) extract à¦•à¦°à§‡à¥¤ silent à¦¹à¦²à§‡ -91dBà¥¤"""
     try:
         r = subprocess.run(
             ["ffmpeg","-hide_banner","-nostats","-i",path,
              "-af","volumedetect","-vn","-sn","-dn","-f","null","-"],
             capture_output=True, text=True
         )
-        # stderr-à¦ "mean_volume: -25.3 dB" line à¦¥à¦¾à¦•à§‡
         m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", r.stderr)
         return float(m.group(1)) if m else None
     except Exception:
@@ -442,25 +424,13 @@ def _probe_mean_volume_db(path):
 def apply_ducking(video_path, dubbed_wav, out_path,
                   bg_target_db=-22.0, voice_vol="2dB",
                   bg_floor_db=-50.0, max_bg_boost_db=6.0):
-    """
-    Enhanced merge_background_and_vocals (zip reference + amplitude check):
-
-    Step 1: video-à¦à¦° audio mean volume probe à¦•à¦°à§‹
-    Step 2: à¦¯à¦¦à¦¿ audio silent à¦¬à¦¾ floor-à¦à¦° à¦¨à¦¿à¦šà§‡ (-50dB), bg=0 (mute)
-    Step 3: à¦¨à¦¯à¦¼à¦¤à§‹ bg_target_db (default -22dB)-à¦ normalize à¦•à¦°à¦¾à¦° à¦œà¦¨à§à¦¯ gain à¦¹à¦¿à¦¸à¦¾à¦¬ à¦•à¦°à§‹
-            (à¦•à¦–à¦¨à¦“ max_bg_boost_db = +6dB à¦à¦° à¦¬à§‡à¦¶à¦¿ boost à¦•à¦°à¦¬ à¦¨à¦¾ â€” noise amplify à¦à¦¡à¦¼à¦¾à¦¨à§‹)
-    Step 4: voice + normalized bg â†’ amix
-    """
     mean_db = _probe_mean_volume_db(video_path)
 
     if mean_db is None or mean_db <= bg_floor_db:
-        # Effectively silent original audio â€” just use voice
         bg_gain = -60.0
     else:
-        # Normalize to target â€” but cap boost
         desired_gain = bg_target_db - mean_db
         bg_gain = min(max_bg_boost_db, desired_gain)
-        # Don't make it louder than voice (cap at -3dB always)
         bg_gain = min(bg_gain, -3.0)
 
     fc = (
@@ -477,7 +447,7 @@ def apply_ducking(video_path, dubbed_wav, out_path,
         "-shortest","-movflags","+faststart",out_path
     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-# â”€â”€ Background worker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Background worker ─────────────────────────────────────────────
 def _run_tts_job(job_id):
     job = load_job(job_id)
     if not job: return
@@ -485,7 +455,7 @@ def _run_tts_job(job_id):
     job["status"]     = "running"
     job["started_at"] = time.time()
     job["logs"]       = job.get("logs", [])
-    job_log(job, f"ðŸš€ Job à¦¶à§à¦°à§ â€” {job['total']} segments")
+    job_log(job, f"🚀 Job শুরু — {job['total']} segments")
     save_job(job)
 
     segments     = job["segments"]
@@ -498,10 +468,9 @@ def _run_tts_job(job_id):
     edge_voice   = job.get("edge_voice", "auto")
     gemini_only  = bool(job.get("gemini_only", True))
     key_idx      = [job.get("_key_idx", 0)]
-    do_concat    = bool(job.get("concat_segments", False))   # BUG FIX: default OFF
+    do_concat    = bool(job.get("concat_segments", False))
     do_silence   = job.get("remove_silence", True)
 
-    # concat_close_transcripts (zip feature)
     if do_concat and not job.get("_concat_done"):
         orig_count = len(segments)
         segments = concat_close_transcripts(
@@ -515,7 +484,7 @@ def _run_tts_job(job_id):
         ]
         job["total"]       = len(segments)
         job["_concat_done"]= True
-        job_log(job, f"ðŸ”— Concat: {orig_count} â†’ {len(segments)} segments (max 15s)")
+        job_log(job, f"🔗 Concat: {orig_count} → {len(segments)} segments (max 15s)")
         save_job(job)
         segments = job["segments"]
 
@@ -525,29 +494,25 @@ def _run_tts_job(job_id):
     try:
         total_segs = len(segments)
         for i in range(total_segs):
-            # â”€â”€ CRITICAL FIX: reload job AND re-bind seg via index â”€â”€
-            # à¦ªà§à¦°à¦¨à§‹ version-à¦ seg local ref â†’ save_job() reload à¦•à¦°à¦¾à¦° à¦ªà¦°
-            # status="done" hariye jetoà¥¤ index à¦¦à¦¿à¦¯à¦¼à§‡ fresh job["segments"][i] use à¦•à¦°à¦¿à¥¤
             job = load_job(job_id)
             if not job: return
             if job.get("stop_requested"):
-                job_log(job, "ðŸ›‘ Stopped by user", "warn")
+                job_log(job, "🛑 Stopped by user", "warn")
                 job["status"] = "stopped"; save_job(job); return
 
             seg = job["segments"][i]
             wav_path = _seg_wav_path(job_id, i)
 
-            # Resume: file already exists?
             if os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
                 seg["status"]   = "done"
                 seg["wav_path"] = wav_path
                 job["done"]     = sum(1 for s in job["segments"] if s.get("status")=="done")
-                job_log(job, f"[seg{i+1}] â­ Resume â€” file exists")
+                job_log(job, f"[seg{i+1}] ⏭ Resume — file exists")
                 save_job(job); continue
 
             seg["status"]  = "processing"
             job["current"] = i
-            job_log(job, f"[seg{i+1}/{job['total']}] ðŸ“ \"{seg['text'][:40]}...\"")
+            job_log(job, f"[seg{i+1}/{job['total']}] 📝 \"{seg['text'][:40]}...\"")
             save_job(job)
 
             try:
@@ -570,18 +535,13 @@ def _run_tts_job(job_id):
                 wav_bytes = pcm_to_wav(pcm)
                 with open(wav_path,"wb") as f: f.write(wav_bytes)
 
-                # Silence removal (only if explicitly enabled)
                 if do_silence and not used_prov.startswith("cache"):
                     before = os.path.getsize(wav_path)
                     remove_silence(wav_path)
                     after  = os.path.getsize(wav_path)
                     if before != after:
-                        job_log(job, f"[seg{i+1}] âœ‚ï¸ Silence removed ({before//1024}â†’{after//1024}kb)")
+                        job_log(job, f"[seg{i+1}] ✂️ Silence removed ({before//1024}→{after//1024}kb)")
 
-                # â”€â”€ Re-fetch latest job + bulletproof persist â”€â”€
-                # CRITICAL: synthesize_segment calls save_job many times for
-                # logging/key_pool updates. To avoid races, we re-fetch
-                # immediately AFTER synth and persist seg.status atomically.
                 for _retry in range(3):
                     job = load_job(job_id)
                     if not job: return
@@ -592,30 +552,24 @@ def _run_tts_job(job_id):
                     job["done"]     = sum(1 for s in job["segments"] if s.get("status")=="done")
                     job["_key_idx"] = key_idx[0]
                     save_job(job)
-                    # Verify it actually persisted
                     _v = load_job(job_id)
                     if _v and _v["segments"][i].get("status") == "done":
                         break
-                    job_log(job, f"[seg{i+1}] âš ï¸ persist retry {_retry+1}/3", "warn")
+                    job_log(job, f"[seg{i+1}] ⚠️ persist retry {_retry+1}/3", "warn")
                     time.sleep(0.05)
 
             except InterruptedError:
                 job = load_job(job_id) or job
                 job["status"] = "stopped"
-                job_log(job, "ðŸ›‘ Stopped", "warn")
+                job_log(job, "🛑 Stopped", "warn")
                 save_job(job); return
             except Exception as e:
-                # Re-fetch first
                 job = load_job(job_id) or job
                 seg = job["segments"][i]
                 seg["status"] = "error"
                 seg["error"]  = str(e)
-                job_log(job, f"[seg{i+1}] âŒ {str(e)[:80]}", "error")
+                job_log(job, f"[seg{i+1}] ❌ {str(e)[:80]}", "error")
 
-            # (done & _key_idx persisted atomically inside try block above)
-
-        # â”€â”€ Final: AUTHORITATIVE done count from disk + wav file presence â”€â”€
-        # SAFETY NET: even if a flag missed persisting, count wav files on disk
         job = load_job(job_id) or job
         real_done = 0
         for _i, _s in enumerate(job["segments"]):
@@ -624,22 +578,22 @@ def _run_tts_job(job_id):
                 if _s.get("status") != "done":
                     _s["status"]   = "done"
                     _s["wav_path"] = _wp
-                    job_log(job, f"[seg{_i+1}] ðŸ”§ wav exists but flag was stale â€” fixed", "info")
+                    job_log(job, f"[seg{_i+1}] 🔧 wav exists but flag was stale — fixed", "info")
                 real_done += 1
         job["done"]   = real_done
         job["status"] = "complete"
-        job_log(job, f"ðŸŽ‰ à¦¶à§‡à¦·! {real_done}/{job['total']} done", "success")
+        job_log(job, f"🎉 শেষ! {real_done}/{job['total']} done", "success")
         save_job(job)
 
     except Exception as e:
         job["status"] = "error"; job["error"] = str(e)
-        job_log(job, f"âŒ Fatal: {e}", "error")
+        job_log(job, f"❌ Fatal: {e}", "error")
         save_job(job)
     finally:
         loop.close()
 
 
-# â”€â”€ TTS Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── TTS Routes ─────────────────────────────────────────────────────
 @app.route("/tts/start", methods=["POST"])
 def tts_start():
     data           = request.get_json(force=True)
@@ -652,15 +606,14 @@ def tts_start():
     tts_provider   = (data.get("tts_provider", "gemini") or "gemini").strip().lower()
     gemini_only    = bool(data.get("gemini_only", True))
     resume_id      = data.get("resume_id", "").strip()
-    remove_silence    = bool(data.get("remove_silence", False))   # default OFF
+    remove_silence    = bool(data.get("remove_silence", False))
     language          = data.get("language", "Bengali")
-    concat_segments   = bool(data.get("concat_segments", False))   # default OFF
+    concat_segments   = bool(data.get("concat_segments", False))
 
     if tts_provider == "edge":
         gemini_keys = []
         gemini_only = False
 
-    # ---- Resume / Restart (BUG FIX) ----
     if resume_id:
         old_job = load_job(resume_id)
         if old_job:
@@ -676,7 +629,6 @@ def tts_start():
             old_job["edge_pitch"]     = edge_pitch
             old_job["edge_rate"]      = edge_rate
             old_job["voice"]          = voice or old_job.get("voice", "Charon")
-            # KEY POOL RESET: resume-à¦ à¦¸à¦¬ key cooldown clear à¦•à¦°à§‹
             if "key_pool" in old_job:
                 for k in old_job["key_pool"]:
                     k["cooldown_until"]    = 0.0
@@ -684,7 +636,6 @@ def tts_start():
                     k["rpm_window_start"]  = time.time()
                     k["last_status"]       = "ready"
             for s in old_job.get("segments", []):
-                # WAV FILE RECHECK: "done" segment à¦à¦° file actually à¦†à¦›à§‡ à¦•à¦¿à¦¨à¦¾ verify à¦•à¦°à§‹
                 if s.get("status") == "done":
                     wp = s.get("wav_path", "")
                     if not wp or not os.path.exists(wp) or os.path.getsize(wp) <= 100:
@@ -693,7 +644,7 @@ def tts_start():
                 elif s.get("status") != "done":
                     s["status"] = "pending"
             old_job["done"] = sum(1 for s in old_job["segments"] if s.get("status") == "done")
-            job_log(old_job, f"ðŸ”„ Resume â€” restart job (done={old_job['done']}/{old_job['total']})", "info")
+            job_log(old_job, f"🔄 Resume — restart job (done={old_job['done']}/{old_job['total']})", "info")
             save_job(old_job)
             threading.Thread(target=_run_tts_job, args=(resume_id,), daemon=True).start()
             return jsonify({"job_id": resume_id, "resumed": True})
@@ -739,14 +690,13 @@ def tts_stop(job_id):
     if not job:
         return jsonify({"error": "not found"}), 404
     job["stop_requested"] = True
-    job_log(job, "ðŸ›‘ Stop requested by user", "warn")
+    job_log(job, "🛑 Stop requested by user", "warn")
     save_job(job)
     return jsonify({"ok": True})
 
 
 @app.route("/tts/status/<job_id>")
 def tts_status(job_id):
-    # Allow client to resume log stream from a given index
     try:
         start_log_idx = int(request.args.get("log_from", "0"))
     except Exception:
@@ -767,7 +717,6 @@ def tts_status(job_id):
             status = job.get("status", "")
             logs   = job.get("logs", [])
 
-            # à¦¨à¦¤à§à¦¨ log entries à¦ªà¦¾à¦ à¦¾à¦“
             if len(logs) > last_log_len:
                 new_logs = logs[last_log_len:]
                 last_log_len = len(logs)
@@ -780,15 +729,6 @@ def tts_status(job_id):
                 seg_text = ""
                 if 0 <= curr < len(job["segments"]):
                     seg_text = job["segments"][curr].get("text", "")[:30]
-
-                # key reset time estimate
-                key_reset_info = []
-                keys = job.get("gemini_keys", [])
-                for ki in range(len(keys)):
-                    key_reset_info.append({
-                        "key_num": ki + 1,
-                        "label":   f"key#{ki+1}",
-                    })
 
                 yield (
                     f"event: progress\n"
@@ -819,12 +759,11 @@ def tts_status(job_id):
                         })
                 ok_n = sum(1 for r in results if r.get("pcm_b64"))
 
-                # â”€â”€â”€ DIAGNOSTIC DUMP (just before video build trigger) â”€â”€â”€
                 done_count   = sum(1 for s in job["segments"] if s.get("status") == "done")
                 pending_count= sum(1 for s in job["segments"] if s.get("status") in ("pending","processing"))
                 failed_count = sum(1 for s in job["segments"] if s.get("status") in ("error","failed"))
                 _diag_lines = [
-                    "â•â•â•â•â•â•â•â•â•â•â• DIAGNOSTIC DUMP (pre-build) â•â•â•â•â•â•â•â•â•â•â•",
+                    "═══════════════════════════════════════════════════════",
                     f"job_id          = {job_id}",
                     f"job.status      = {status}",
                     f"job.done        = {job.get('done', 0)}",
@@ -838,7 +777,6 @@ def tts_status(job_id):
                     _wp  = _s.get("wav_path", "")
                     _wp_exists = bool(_wp and os.path.exists(_wp))
                     _wp_size   = os.path.getsize(_wp) if _wp_exists else 0
-                    # find corresponding result
                     _r = next((r for r in results if r.get("idx") == _s.get("idx")), {})
                     _pcm = _r.get("pcm_b64", "")
                     _diag_lines.append(
@@ -847,15 +785,12 @@ def tts_status(job_id):
                         f"wav_exists={_wp_exists} wav_size={_wp_size}B "
                         f"pcm_b64_exists={bool(_pcm)} pcm_b64_length={len(_pcm)}"
                     )
-                _diag_lines.append("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
-                # Print to server stdout (Railway logs)
+                _diag_lines.append("═══════════════════════════════════════════════════════")
                 for _ln in _diag_lines:
                     print(f"[DIAG] {_ln}", flush=True)
-                # Also push into job logs (TTS Live Log panel)
                 for _ln in _diag_lines:
                     job_log(job, _ln, "info")
                 save_job(job)
-                # And emit as a single SSE log event so the frontend shows it now (not after refresh)
                 yield (
                     f"event: log\n"
                     f"data: {json.dumps({'entries': [{'t': round(time.time(),2), 'msg': _ln, 'lvl': 'info'} for _ln in _diag_lines]}, ensure_ascii=False)}\n\n"
@@ -878,7 +813,6 @@ def tts_status(job_id):
 
 @app.route("/tts/active")
 def tts_active():
-    """List recent jobs (newest first) â€” used for page-refresh recovery."""
     out = []
     try:
         files = sorted(os.listdir(JOBS_DIR), key=lambda f: -os.path.getmtime(os.path.join(JOBS_DIR, f)))
@@ -924,9 +858,9 @@ def tts_job_delete(job_id):
     return jsonify({"ok": True})
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 # PLATFORM / PROXY / XRAY
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 
 def get_platform(url):
     if re.search(r'instagram\.com', url, re.I):             return 'instagram'
@@ -1041,9 +975,9 @@ def _apply_saved_config():
 
 _apply_saved_config()
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 # YT-DLP
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 
 YT_STRATEGIES = [
     {"name": "web_embedded", "client": "web_embedded", "max_sec": 150},
@@ -1119,9 +1053,9 @@ def ytdlp_download(url, out_dir, job_log_fn=None):
 
     raise ValueError("All strategies failed:\n" + "\n".join(errors))
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 # KUAISHOU
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 
 PHOTO_ID_RE = re.compile(r"/(?:short-video|video|photo)/([A-Za-z0-9_-]+)")
 
@@ -1239,9 +1173,9 @@ async def download_video(video_url, out_path):
                 async for chunk in resp.aiter_bytes(1024*64):
                     f.write(chunk)
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 # ASR
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 
 def extract_audio(video_path, mp3_path):
     subprocess.run(
@@ -1320,26 +1254,26 @@ def transcribe_stream(url, groq_keys_raw, language="zh"):
     try:
         platform = get_platform(url)
         strategy = "yt-dlp"
-        yield sse("log",{"msg":f"ðŸ” Platform: {platform.upper()}"})
+        yield sse("log",{"msg":f"🔍 Platform: {platform.upper()}"})
         if platform=='kuaishou':
-            yield sse("log",{"msg":"â³ Getting Kuaishou video URL..."})
+            yield sse("log",{"msg":"⏳ Getting Kuaishou video URL..."})
             video_url,meta,strategy = asyncio.run(get_ks_video_url(url))
             caption=(meta or {}).get("caption") or (meta or {}).get("photoId") or "Kuaishou"
-            yield sse("log",{"msg":f"âœ… Video URL found via {strategy}"})
-            yield sse("log",{"msg":f"ðŸŽ¬ Source: {caption}"})
-            yield sse("log",{"msg":"â¬‡ Downloading video..."})
+            yield sse("log",{"msg":f"✅ Video URL found via {strategy}"})
+            yield sse("log",{"msg":f"🎬 Source: {caption}"})
+            yield sse("log",{"msg":"⬇ Downloading video..."})
             asyncio.run(download_video(video_url, video_path))
         else:
-            yield sse("log",{"msg":f"â¬‡ Downloading via yt-dlp ({platform})..."})
+            yield sse("log",{"msg":f"⬇ Downloading via yt-dlp ({platform})..."})
             video_path = ytdlp_download(url, work_dir)
         size_mb = os.path.getsize(video_path)/1024/1024
-        yield sse("log",{"msg":f"âœ… Downloaded ({size_mb:.1f} MB)"})
-        yield sse("log",{"msg":"ðŸ”Š Extracting audio..."})
+        yield sse("log",{"msg":f"✅ Downloaded ({size_mb:.1f} MB)"})
+        yield sse("log",{"msg":"🔊 Extracting audio..."})
         extract_audio(video_path, mp3_path)
-        yield sse("log",{"msg":"âœ… Audio extracted"})
-        yield sse("log",{"msg":f"ðŸ¤– Sending to Groq Whisper ({language})..."})
+        yield sse("log",{"msg":"✅ Audio extracted"})
+        yield sse("log",{"msg":f"🤖 Sending to Groq Whisper ({language})..."})
         result = asyncio.run(groq_transcribe(mp3_path, groq_keys, language))
-        yield sse("log",{"msg":f"âœ… Transcription done! ({result.get('duration',0):.1f}s)"})
+        yield sse("log",{"msg":f"✅ Transcription done! ({result.get('duration',0):.1f}s)"})
 
         segments = []
         raw_segments = result.get("segments")
@@ -1355,7 +1289,7 @@ def transcribe_stream(url, groq_keys_raw, language="zh"):
                 if not word_text: continue
                 if current_start is None: current_start=w["start"]
                 current_words.append(word_text)
-                if word_text[-1] in 'à¥¤.?!\n':
+                if word_text[-1] in '।.?!\n':
                     joined="".join(current_words) if has_chinese(word_text) else " ".join(current_words)
                     segments.append({"start":round(current_start,3),"end":round(w["end"],3),"text":joined})
                     current_words=[]; current_start=None
@@ -1373,9 +1307,9 @@ def transcribe_stream(url, groq_keys_raw, language="zh"):
         try: os.unlink(video_path)
         except: pass
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 # FLASK ROUTES
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ──────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -1472,12 +1406,11 @@ def dub():
     data        = request.get_json(force=True)
     video_url   = (data.get("video_url") or "").strip()
     segments    = data.get("segments",[])
-    use_ducking = data.get("ducking", False)   # Background Audio Ducking
+    use_ducking = data.get("ducking", False)
 
-    # â”€â”€â”€ DIAGNOSTIC DUMP at /dub entry point â”€â”€â”€
     _ok_segs   = [s for s in segments if s.get("pcm_b64")]
     _fail_segs = [s for s in segments if not s.get("pcm_b64")]
-    print("[DIAG] â•â•â•â•â•â•â•â•â•â•â• /dub ENTRY DUMP â•â•â•â•â•â•â•â•â•â•â•", flush=True)
+    print("[DIAG] ═══════════════════════════════════ /dub ENTRY DUMP ═══════════════════════════════════", flush=True)
     print(f"[DIAG] total_segments      = {len(segments)}", flush=True)
     print(f"[DIAG] segments_with_pcm   = {len(_ok_segs)}", flush=True)
     print(f"[DIAG] segments_without    = {len(_fail_segs)}", flush=True)
@@ -1491,7 +1424,7 @@ def dub():
             f"pcm_b64_exists={bool(_pcm)} pcm_b64_length={len(_pcm)}",
             flush=True
         )
-    print("[DIAG] â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•", flush=True)
+    print("[DIAG] ════════════════════════════════════════════════════════════════════════════════════", flush=True)
 
     if not video_url: return jsonify({"error":"video_url required"}),400
     if not segments:  return jsonify({"error":"segments required"}),400
@@ -1555,7 +1488,6 @@ def dub():
         else:
             mixed_audio=base_audio
         if use_ducking:
-            # Background Audio Ducking: original audio + dubbed audio mix
             apply_ducking(video_path, mixed_audio, out_path)
         else:
             subprocess.run(["ffmpeg","-y","-i",video_path,"-i",mixed_audio,
@@ -1588,7 +1520,7 @@ def setup_status():
 @app.route("/setup/config",methods=["GET"])
 def setup_config_get():
     cfg=load_config()
-    if "VMESS_LINK" in cfg: cfg["VMESS_LINK"]=cfg["VMESS_LINK"][:20]+"â€¦"
+    if "VMESS_LINK" in cfg: cfg["VMESS_LINK"]=cfg["VMESS_LINK"][:20]+"…"
     return jsonify(cfg)
 
 @app.route("/setup/config",methods=["POST"])
@@ -1644,9 +1576,9 @@ def setup_proxy_test():
         return jsonify({"ok":False,"error":str(e)})
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────
 # AUDIO MAKER — single key, single voice, infinite retry, never give up
-# ══════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────
 
 AM_JOBS_DIR = os.path.join(TEMP_DIR, "am_jobs")
 Path(AM_JOBS_DIR).mkdir(parents=True, exist_ok=True)
@@ -1670,9 +1602,7 @@ def am_log(job, msg, lvl="info"):
     if len(job["logs"]) > 300: job["logs"] = job["logs"][-300:]
 
 def _am_chunk_text(script, chunk_size):
-    """Sentence boundary তে ভাঙো — মাঝখানে কাটবে না।"""
     import re as _re
-    # sentence enders: ।.?! newline
     sentences = _re.split(r'(?<=[।.?!\n])\s*', script.strip())
     chunks, current = [], ""
     for sent in sentences:
@@ -1682,7 +1612,6 @@ def _am_chunk_text(script, chunk_size):
             current = (current + " " + sent).strip() if current else sent
         else:
             if current: chunks.append(current)
-            # single sentence longer than chunk_size → hard split
             if len(sent) > chunk_size:
                 for i in range(0, len(sent), chunk_size):
                     chunks.append(sent[i:i+chunk_size])
@@ -1693,7 +1622,6 @@ def _am_chunk_text(script, chunk_size):
 
 
 async def _am_generate_chunk(text, api_key, voice, language, job, chunk_label, rate_wait_sec=90):
-    """Single key, infinite retry — never give up."""
     attempt = 0
     while True:
         if job.get("stop_requested"):
@@ -1789,7 +1717,6 @@ def _run_am_job(job_id):
 
     try:
         for i, chunk_text in enumerate(chunks):
-            # reload for stop check
             job = am_load_job(job_id)
             if not job: return
             if job.get("stop_requested"):
@@ -1799,7 +1726,6 @@ def _run_am_job(job_id):
 
             wav_path = _am_chunk_path(job_id, i)
 
-            # resume: file exists?
             if os.path.exists(wav_path) and os.path.getsize(wav_path) > 200:
                 job["done"]    = i + 1
                 job["current"] = i
@@ -1816,7 +1742,6 @@ def _run_am_job(job_id):
                     _am_generate_chunk(chunk_text, api_key, voice, language,
                                        job, f"chunk{i+1}", rate_wait)
                 )
-                # pcm → wav save
                 wav_bytes = pcm_to_wav(pcm)
                 with open(wav_path, "wb") as f: f.write(wav_bytes)
 
@@ -1837,7 +1762,6 @@ def _run_am_job(job_id):
                 am_log(job, f"💀 Fatal: {e}", "error")
                 am_save_job(job); return
 
-            # inter-chunk delay
             if i < len(chunks) - 1:
                 am_log(job, f"[chunk{i+1}] ⏳ {delay_sec}s delay before next chunk...")
                 for _ in range(delay_sec):
@@ -1845,7 +1769,6 @@ def _run_am_job(job_id):
                     if job and job.get("stop_requested"): break
                     loop.run_until_complete(asyncio.sleep(1))
 
-        # ── Concat all WAVs → MP3 ──
         job = am_load_job(job_id)
         am_log(job, f"🎛 সব chunk ready → FFmpeg concat করছি...", "info")
         am_save_job(job)
@@ -1859,7 +1782,6 @@ def _run_am_job(job_id):
         if not wav_list:
             raise RuntimeError("No WAV files to concat")
 
-        # concat list file
         list_path = os.path.join(AM_JOBS_DIR, f"{job_id}_list.txt")
         with open(list_path, "w") as f:
             for p in wav_list:
@@ -1959,7 +1881,6 @@ def am_status(job_id):
             status = job.get("status", "")
             logs   = job.get("logs", [])
 
-            # new logs
             if len(logs) > last_log_len:
                 new_logs = logs[last_log_len:]
                 last_log_len = len(logs)
