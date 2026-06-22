@@ -88,6 +88,7 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
   <div class="top-tabs">
     <button class="top-tab active" onclick="switchTopTab('main')">🎬 Main</button>
     <button class="top-tab" onclick="switchTopTab('audiomaker')">🎙 Audio Maker</button>
+    <button class="top-tab" onclick="switchTopTab('scenevideo')">🎞 Scene Video</button>
     <button class="top-tab" onclick="switchTopTab('setup')">⚙️ Setup</button>
   </div>
 
@@ -375,6 +376,72 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
       <h2>✅ Output</h2>
       <audio id="amAudio" controls style="width:100%;margin-bottom:10px"></audio>
       <a id="amDownload" class="btn-dl" download="audio_output.mp3">⬇ Download MP3</a>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SCENE VIDEO ট্যাব — নতুন ৪র্থ top-level ট্যাব
+       ═══════════════════════════════════════════════════════════════ -->
+  <div id="topSceneVideo" style="display:none">
+    <div class="card">
+      <h2>⚙ Scene Video Settings</h2>
+      <label>Script/Text API Key <span style="font-size:.78rem;color:#e63946">(scene breakdown বানানোর জন্য)</span></label>
+      <input type="text" id="svTextKey" placeholder="AIzaSy..." style="font-family:monospace">
+
+      <label style="margin-top:10px">TTS API Key <span style="font-size:.78rem;color:#777">(একটাই — voice generation এর জন্য)</span></label>
+      <input type="text" id="svTtsKey" placeholder="AIzaSy..." style="font-family:monospace">
+
+      <label style="margin-top:10px">Image API Keys <span style="font-size:.78rem;color:#777">(একাধিক হলে কমা দিয়ে আলাদা করো — rate-limit rotation এর জন্য)</span></label>
+      <textarea id="svImageKeys" placeholder="key1,key2,key3" style="min-height:60px;font-family:monospace;font-size:.85rem"></textarea>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Voice</label>
+          <select id="svVoice">
+            <option value="Charon">Charon (male)</option>
+            <option value="Schedar">Schedar (male)</option>
+            <option value="Fenrir">Fenrir (male)</option>
+            <option value="Achernar">Achernar (male)</option>
+            <option value="Aoede">Aoede (female)</option>
+            <option value="Kore">Kore (female)</option>
+            <option value="Zephyr">Zephyr (female)</option>
+            <option value="Leda">Leda (female)</option>
+          </select>
+        </div>
+      </div>
+      <button onclick="svSaveSettings()" class="btn-sm" style="margin-top:8px">💾 Save Settings</button>
+      <div id="svSaveMsg" style="font-size:.82rem;color:#4caf50;margin-top:4px"></div>
+    </div>
+
+    <div class="card">
+      <h2>📝 ঘটনার বিবরণ</h2>
+      <textarea id="svEventDesc" placeholder="যেমন: সিলেট জেলায় হাসপাতালে যাওয়ার সময় রাস্তায় অ্যাম্বুলেন্স এক্সিডেন্ট করে, গাড়ি ফ্লাইওভারে আটকে যায়, হেলিকপ্টারে এসে রোগীকে উদ্ধার করে।" style="min-height:140px;font-size:.92rem;line-height:1.7"></textarea>
+      <div style="font-size:.78rem;color:#666;margin-top:-6px;margin-bottom:8px">
+        ২-৩ লাইনে ঘটনাটা লিখো — script, scene breakdown, ছবির prompt সবকিছু auto বানিয়ে দেবে।
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn-dub" id="svStartBtn" onclick="svStart()" style="flex:1;margin-top:0">🎬 Generate Video</button>
+        <button id="svStopBtn" onclick="svStop()" style="display:none;flex:0 0 auto;padding:12px 20px;background:#7f1d1d;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600">🛑 Stop</button>
+      </div>
+      <div id="svProgress" style="font-size:.84rem;color:#aaa;margin-top:10px;min-height:20px"></div>
+    </div>
+
+    <!-- Live Log -->
+    <div class="card" id="svLogCard" style="display:none">
+      <h2 style="display:flex;justify-content:space-between;align-items:center">
+        <span>📡 Live Log</span>
+        <button class="btn-sm" onclick="document.getElementById('svLogBox').innerHTML=''" style="font-size:.7rem;padding:2px 8px">Clear</button>
+      </h2>
+      <div id="svStageRow" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <div id="svLogBox" style="background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:14px;font-family:monospace;font-size:.8rem;min-height:200px;max-height:400px;overflow-y:auto;line-height:1.65;resize:vertical"></div>
+    </div>
+
+    <!-- Output -->
+    <div class="card" id="svOutputCard" style="display:none">
+      <h2>✅ Output</h2>
+      <video id="svVideo" controls style="width:100%;max-width:400px;display:block;margin:0 auto 10px;border-radius:8px"></video>
+      <a id="svDownload" class="btn-dl" download="scene_video.mp4">⬇ Download Video</a>
     </div>
   </div>
 
@@ -904,13 +971,15 @@ async function stopDubbing(){
 function switchTopTab(tab){
   document.getElementById('topMain').style.display       = tab==='main'        ?'':'none';
   document.getElementById('topAudioMaker').style.display = tab==='audiomaker'  ?'':'none';
+  document.getElementById('topSceneVideo').style.display = tab==='scenevideo'  ?'':'none';
   document.getElementById('topSetup').style.display      = tab==='setup'       ?'':'none';
   document.querySelectorAll('.top-tab').forEach((b,i)=>{
     b.classList.toggle('active',
-      (tab==='main'&&i===0)||(tab==='audiomaker'&&i===1)||(tab==='setup'&&i===2));
+      (tab==='main'&&i===0)||(tab==='audiomaker'&&i===1)||(tab==='scenevideo'&&i===2)||(tab==='setup'&&i===3));
   });
   if(tab==='setup') setupLoadStatus();
   if(tab==='audiomaker') amLoadSettings();
+  if(tab==='scenevideo') svLoadSettings();
 }
 function dubSwitchTab(tab){
   document.getElementById('tabAuto').style.display   = tab==='auto'  ?'':'none';
@@ -1288,6 +1357,224 @@ async function amStop(){
     document.getElementById('amProgress').textContent='🛑 Stop করা হয়েছে।';
   }catch(e){
     document.getElementById('amProgress').textContent='❌ Stop error: '+e.message;
+  }finally{
+    stopBtn.disabled=false; stopBtn.textContent='🛑 Stop';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCENE VIDEO JS
+// ═══════════════════════════════════════════════════════════════
+
+const SV_JOB_KEY = 'sv_job_id';
+let _svJobId = null;
+
+function svSaveSettings(){
+  localStorage.setItem('sv_text_key',  document.getElementById('svTextKey').value.trim());
+  localStorage.setItem('sv_tts_key',   document.getElementById('svTtsKey').value.trim());
+  localStorage.setItem('sv_image_keys',document.getElementById('svImageKeys').value.trim());
+  localStorage.setItem('sv_voice',     document.getElementById('svVoice').value);
+  const m = document.getElementById('svSaveMsg');
+  m.textContent='✅ Saved!'; setTimeout(()=>m.textContent='',2000);
+}
+
+function svLoadSettings(){
+  const get = (id, key) => {
+    const v = localStorage.getItem(key);
+    const el = document.getElementById(id);
+    if (v && el) el.value = v;
+  };
+  get('svTextKey',   'sv_text_key');
+  get('svTtsKey',    'sv_tts_key');
+  get('svImageKeys', 'sv_image_keys');
+  get('svVoice',     'sv_voice');
+
+  // আগের চলমান job থাকলে recover করো
+  const savedId = localStorage.getItem(SV_JOB_KEY);
+  if(savedId) _svTryRecover(savedId);
+}
+
+async function _svTryRecover(jobId){
+  try{
+    const r = await fetch(`/scenevideo/job/${jobId}`);
+    if(!r.ok) { localStorage.removeItem(SV_JOB_KEY); return; }
+    const job = await r.json();
+    if(['running','pending'].includes(job.status)){
+      _svJobId = jobId;
+      document.getElementById('svLogCard').style.display='block';
+      document.getElementById('svStopBtn').style.display='block';
+      document.getElementById('svStartBtn').disabled=true;
+      document.getElementById('svProgress').textContent =
+        `🔄 আগের job [${jobId.slice(0,8)}] চলছে — stage: ${job.stage}`;
+      _svAttachSSE(jobId);
+    } else if(job.status==='complete'){
+      _svShowOutput(jobId);
+      localStorage.removeItem(SV_JOB_KEY);
+    } else {
+      localStorage.removeItem(SV_JOB_KEY);
+    }
+  }catch(e){ localStorage.removeItem(SV_JOB_KEY); }
+}
+
+async function svStart(){
+  const textKey   = document.getElementById('svTextKey').value.trim();
+  const ttsKey    = document.getElementById('svTtsKey').value.trim();
+  const imageKeysRaw = document.getElementById('svImageKeys').value.trim();
+  const voice     = document.getElementById('svVoice').value;
+  const eventDesc = document.getElementById('svEventDesc').value.trim();
+
+  if(!textKey || !ttsKey) { alert('Text API key এবং TTS API key দুটোই দাও'); return; }
+  if(!imageKeysRaw)        { alert('অন্তত একটা Image API key দাও'); return; }
+  if(!eventDesc)           { alert('ঘটনার বিবরণ লেখো'); return; }
+
+  const imageKeys = imageKeysRaw.split(',').map(s=>s.trim()).filter(Boolean);
+
+  document.getElementById('svStartBtn').disabled=true;
+  document.getElementById('svStopBtn').style.display='block';
+  document.getElementById('svLogCard').style.display='block';
+  document.getElementById('svOutputCard').style.display='none';
+  document.getElementById('svLogBox').innerHTML='';
+  document.getElementById('svStageRow').innerHTML='';
+  document.getElementById('svProgress').textContent='⏳ Job শুরু হচ্ছে...';
+
+  try{
+    const r = await fetch('/scenevideo/start',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        event_description: eventDesc,
+        text_api_key: textKey,
+        tts_api_key: ttsKey,
+        image_api_keys: imageKeys,
+        voice: voice
+      })
+    });
+    if(!r.ok){
+      const err = await r.json().catch(()=>({error:'unknown'}));
+      throw new Error(err.error || ('HTTP '+r.status));
+    }
+    const d = await r.json();
+    _svJobId = d.job_id;
+    localStorage.setItem(SV_JOB_KEY, _svJobId);
+    _svAttachSSE(_svJobId);
+  }catch(e){
+    document.getElementById('svProgress').textContent='❌ Start error: '+e.message;
+    document.getElementById('svStartBtn').disabled=false;
+    document.getElementById('svStopBtn').style.display='none';
+  }
+}
+
+const SV_STAGES = [
+  {key:'script',  label:'📝 Script'},
+  {key:'tts',     label:'🎙 TTS'},
+  {key:'split',   label:'✂️ Split'},
+  {key:'images',  label:'🖼 Images'},
+  {key:'video',   label:'🎬 Clips'},
+  {key:'compose', label:'🔗 Compose'},
+];
+
+function _svRenderStages(currentStage){
+  const row = document.getElementById('svStageRow');
+  if(row.children.length===0){
+    SV_STAGES.forEach(s=>{
+      const b=document.createElement('span');
+      b.className='key-badge';
+      b.id=`sv_stage_${s.key}`;
+      b.textContent=s.label;
+      row.appendChild(b);
+    });
+  }
+  const idx = SV_STAGES.findIndex(s=>s.key===currentStage);
+  SV_STAGES.forEach((s,i)=>{
+    const b=document.getElementById(`sv_stage_${s.key}`);
+    if(!b) return;
+    if(i<idx) b.className='key-badge ok';
+    else if(i===idx) b.className='key-badge trying';
+    else b.className='key-badge';
+  });
+}
+
+function _svAttachSSE(jobId){
+  const progress = document.getElementById('svProgress');
+  const logBox   = document.getElementById('svLogBox');
+
+  const es = new EventSource(`/scenevideo/status/${jobId}`);
+
+  es.addEventListener('log', e=>{
+    try{
+      const d = JSON.parse(e.data);
+      (d.entries||[]).forEach(entry=>{
+        const line = document.createElement('div');
+        line.className = `tlog ${entry.lvl||'info'}`;
+        const t = new Date(entry.t*1000).toLocaleTimeString();
+        line.textContent = `[${t}] ${entry.msg}`;
+        logBox.appendChild(line);
+        logBox.scrollTop = logBox.scrollHeight;
+        while(logBox.children.length>400) logBox.removeChild(logBox.firstChild);
+      });
+    }catch(_){}
+  });
+
+  es.addEventListener('progress', e=>{
+    try{
+      const d = JSON.parse(e.data);
+      _svRenderStages(d.stage);
+      let txt = `Stage: ${d.stage}`;
+      if(d.scene_count) txt += ` — ${d.scene_count} scenes`;
+      if(d.stage==='images' && d.scene_count) txt += ` (${d.image_done}/${d.scene_count} ছবি হয়ে গেছে)`;
+      if(d.title) txt += ` — "${d.title}"`;
+      progress.textContent = txt;
+    }catch(_){}
+  });
+
+  es.addEventListener('done', async e=>{
+    es.close();
+    document.getElementById('svStopBtn').style.display='none';
+    document.getElementById('svStartBtn').disabled=false;
+    try{
+      const d = JSON.parse(e.data);
+      if(d.status==='stopped'){
+        progress.textContent='🛑 Stopped।';
+      } else if(d.status==='complete'){
+        progress.textContent='✅ ভিডিও তৈরি হয়ে গেছে!';
+        _svShowOutput(jobId);
+        localStorage.removeItem(SV_JOB_KEY);
+      } else {
+        progress.textContent=`⚠️ Ended: ${d.status}`;
+      }
+    }catch(_){}
+  });
+
+  es.addEventListener('error', e=>{
+    es.close();
+    document.getElementById('svStopBtn').style.display='none';
+    document.getElementById('svStartBtn').disabled=false;
+    try{ progress.textContent='❌ '+JSON.parse(e.data).msg; }
+    catch{ progress.textContent='❌ SSE connection error'; }
+  });
+}
+
+function _svShowOutput(jobId){
+  const card  = document.getElementById('svOutputCard');
+  const video = document.getElementById('svVideo');
+  const dl    = document.getElementById('svDownload');
+  const url   = `/scenevideo/video/${jobId}`;
+  video.src   = url;
+  dl.href     = url;
+  card.style.display='block';
+  video.load();
+}
+
+async function svStop(){
+  if(!_svJobId) return;
+  const stopBtn = document.getElementById('svStopBtn');
+  stopBtn.disabled=true; stopBtn.textContent='⏳ Stopping...';
+  document.getElementById('svProgress').textContent='🛑 Stop signal পাঠানো হচ্ছে...';
+  try{
+    await fetch(`/scenevideo/stop/${_svJobId}`,{method:'POST'});
+    localStorage.removeItem(SV_JOB_KEY);
+    document.getElementById('svProgress').textContent='🛑 Stop করা হয়েছে।';
+  }catch(e){
+    document.getElementById('svProgress').textContent='❌ Stop error: '+e.message;
   }finally{
     stopBtn.disabled=false; stopBtn.textContent='🛑 Stop';
   }
