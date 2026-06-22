@@ -250,7 +250,7 @@ def _next_cooldown_eta(job, now):
     if not alive:
         return -1
     futures = [k["cooldown_until"] - now for k in alive if k["cooldown_until"] > now]
-    return max(, int(min(futures))) if futures else 0
+    return max(0, int(min(futures))) if futures else 0
 
 def _alive_keys_count(job):
     return sum(1 for k in job.get("key_pool", []) if not k.get("permanently_dead"))
