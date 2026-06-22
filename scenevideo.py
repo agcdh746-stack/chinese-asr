@@ -46,12 +46,16 @@ SCENEVIDEO_JOBS_DIR = os.path.join(os.getcwd(), "scenevideo_jobs")
 os.makedirs(SCENEVIDEO_JOBS_DIR, exist_ok=True)
 
 TTS_MODEL   = "gemini-2.5-flash-preview-tts"
-IMAGE_MODEL = "gemini-2.5-flash-image"          # "Nano Banana" — ছবি জেনারেশন
 TEXT_MODEL  = "gemini-2.5-flash"                # script/scene breakdown জেনারেশন
 
-TTS_ENDPOINT   = f"https://generativelanguage.googleapis.com/v1beta/models/{TTS_MODEL}:generateContent"
-IMAGE_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{IMAGE_MODEL}:generateContent"
-TEXT_ENDPOINT  = f"https://generativelanguage.googleapis.com/v1beta/models/{TEXT_MODEL}:generateContent"
+TTS_ENDPOINT  = f"https://generativelanguage.googleapis.com/v1beta/models/{TTS_MODEL}:generateContent"
+TEXT_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{TEXT_MODEL}:generateContent"
+
+# Pollinations image — key ছাড়া সম্পূর্ণ ফ্রি
+POLLINATIONS_IMAGE_URL = "https://image.pollinations.ai/prompt/{prompt}"
+POLLINATIONS_MODEL     = "flux"          # flux | flux-realism | turbo
+POLLINATIONS_IMG_W     = 1080
+POLLINATIONS_IMG_H     = 1920
 
 VIDEO_W, VIDEO_H = 1080, 1920   # vertical (shorts/reels স্টাইল)
 FPS = 30
@@ -304,96 +308,72 @@ def split_audio_by_silence(wav_path, expected_scene_count, out_dir):
     return results
 
 
-# ───────────────────────── ৩. প্রতি-scene image generation ──────────────
+# ───────────────────────── ৩. প্রতি-scene image generation (Pollinations) ──
 
-def generate_scene_image(prompt, api_key, out_path):
-    """একটা scene-এর জন্য Gemini image generation কল করে PNG সেভ করে।"""
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["IMAGE"]},
-    }
-    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+def generate_scene_image(prompt, out_path):
+    """
+    Pollinations.ai দিয়ে একটা scene-এর ছবি বানায়।
+    key লাগে না — সম্পূর্ণ ফ্রি।
+    anatomy ঠিক রাখতে tight suffix যোগ করা হয়।
+    """
+    anatomy_suffix = (
+        "correct human anatomy, two arms, two hands, two legs, "
+        "no extra limbs, no deformity, photorealistic, high quality"
+    )
+    full_prompt = f"{prompt.strip()}, {anatomy_suffix}"
 
-    with httpx.Client(timeout=90) as client:
-        resp = client.post(IMAGE_ENDPOINT, headers=headers, json=payload)
+    import urllib.parse
+    encoded = urllib.parse.quote(full_prompt)
+    url = (
+        f"https://image.pollinations.ai/prompt/{encoded}"
+        f"?model={POLLINATIONS_MODEL}"
+        f"&width={POLLINATIONS_IMG_W}"
+        f"&height={POLLINATIONS_IMG_H}"
+        f"&nologo=true"
+        f"&enhance=true"
+    )
 
-    if resp.status_code == 429:
-        raise _RateLimitError(resp.text[:300])
+    with httpx.Client(timeout=120) as client:
+        resp = client.get(url)
+
     if resp.status_code != 200:
-        raise RuntimeError(f"image gen failed ({resp.status_code}): {resp.text[:500]}")
-
-    data = resp.json()
-    img_b64 = None
-    try:
-        for part in data["candidates"][0]["content"]["parts"]:
-            if "inlineData" in part and part["inlineData"].get("data"):
-                img_b64 = part["inlineData"]["data"]
-                break
-    except (KeyError, IndexError) as e:
-        raise RuntimeError(f"unexpected image response shape: {data}") from e
-
-    if not img_b64:
-        raise RuntimeError(f"image response-এ কোনো image data পাওয়া যায়নি: {data}")
+        raise RuntimeError(f"Pollinations image failed ({resp.status_code}): {resp.text[:300]}")
 
     with open(out_path, "wb") as f:
-        f.write(base64.b64decode(img_b64))
+        f.write(resp.content)
     return out_path
-
-
-class _RateLimitError(Exception):
-    pass
 
 
 def generate_all_scene_images(job, scenes, out_dir):
     """
-    সব scene-এর ছবি বানায়, multi-key pool + adaptive backoff দিয়ে rate-limit
-    সামলায় (Chinese-ASR প্রজেক্টের key-rotation প্যাটার্ন reuse করা)।
+    সব scene-এর ছবি Pollinations দিয়ে বানায়।
+    rate limit নেই — simple sequential loop।
     """
     os.makedirs(out_dir, exist_ok=True)
     results = {}
-    pending = list(range(len(scenes)))
-    backoff_base = 15.0
 
-    while pending:
+    for idx, scene in enumerate(scenes):
         if job.get("stop_requested"):
             raise RuntimeError("ইউজার স্টপ করেছে")
 
-        now = time.time()
-        key_entry = _pick_healthy_key(job, now)
-        if key_entry is None:
-            eta = _next_cooldown_eta(job, now)
-            if eta is None:
-                raise RuntimeError("সব image API key dead — আর কোনো key অবশিষ্ট নেই")
-            job_log(job, f"⏳ সব key cooldown-এ, {eta:.0f}s wait করা হচ্ছে...")
-            time.sleep(min(eta + 1, 30))
-            continue
-
-        idx = pending[0]
-        scene = scenes[idx]
         out_path = os.path.join(out_dir, f"scene_{idx:02d}.png")
+        job_log(job, f"🖼️  Scene {idx+1}/{len(scenes)} ছবি বানানো হচ্ছে...")
 
-        try:
-            generate_scene_image(scene["image_prompt"], key_entry["key"], out_path)
-            results[idx] = out_path
-            pending.pop(0)
-            key_entry["rpm_count"] += 1
-            job_log(job, f"🖼️  Scene {idx+1}/{len(scenes)} ছবি বানানো হয়েছে")
-            job["image_done"] = len(results)
-            save_job(job)
-
-        except _RateLimitError:
-            _mark_key_cooldown(key_entry, backoff_base)
-            job_log(job, f"⚠️  rate limit — key cooldown {backoff_base:.0f}s", "warn")
-            backoff_base = min(backoff_base * 2, 300)
-
-        except Exception as e:
-            msg = str(e)
-            if "401" in msg or "403" in msg or "400" in msg:
-                _mark_key_dead(key_entry, "auth_error")
-                job_log(job, f"❌ key dead মার্ক করা হলো: {msg[:150]}", "error")
-            else:
-                job_log(job, f"❌ scene {idx} image error: {msg[:200]}", "error")
-                time.sleep(5)
+        retry = 0
+        while retry < 3:
+            try:
+                generate_scene_image(scene["image_prompt"], out_path)
+                results[idx] = out_path
+                job_log(job, f"✅ Scene {idx+1}/{len(scenes)} ছবি তৈরি হয়েছে")
+                job["image_done"] = len(results)
+                save_job(job)
+                break
+            except Exception as e:
+                retry += 1
+                job_log(job, f"⚠️  Scene {idx} retry {retry}/3 — {str(e)[:150]}", "warn")
+                time.sleep(3 * retry)
+        else:
+            job_log(job, f"❌ Scene {idx} ছবি বানাতে ব্যর্থ — skip করা হলো", "error")
 
     return results
 
@@ -528,10 +508,9 @@ def _run_scenevideo_job(job_id):
         job_log(job, "✅ Audio scene-wise কাটা শেষ")
         save_job(job)
 
-        # ৪) প্রতি-scene ছবি
+        # ৪) প্রতি-scene ছবি (Pollinations — key লাগে না)
         job["stage"] = "images"
-        job_log(job, "🖼️  Scene ছবি বানানো শুরু হচ্ছে...")
-        _init_key_pool(job, job.get("image_api_keys", [job.get("image_api_key", "")]))
+        job_log(job, "🖼️  Scene ছবি বানানো শুরু হচ্ছে (Pollinations)...")
         image_out_dir = os.path.join(job_dir, "scene_images")
         images = generate_all_scene_images(job, scenes, image_out_dir)
         for idx, path in images.items():
@@ -580,18 +559,13 @@ def register_scenevideo_routes(app):
 
         event_description = (data.get("event_description") or "").strip()
         text_api_key       = (data.get("text_api_key") or "").strip()
-        tts_api_key         = (data.get("tts_api_key") or "").strip()
-        image_api_keys      = data.get("image_api_keys") or []
-        if isinstance(image_api_keys, str):
-            image_api_keys = [image_api_keys]
-        voice                = data.get("voice", "Charon")
+        tts_api_key        = (data.get("tts_api_key") or "").strip()
+        voice              = data.get("voice", "Charon")
 
         if not event_description:
             return jsonify({"error": "event_description required"}), 400
         if not text_api_key or not tts_api_key:
             return jsonify({"error": "text_api_key এবং tts_api_key দুটোই দরকার"}), 400
-        if not image_api_keys:
-            return jsonify({"error": "image_api_keys (অন্তত একটা) দরকার"}), 400
 
         job_id = uuid.uuid4().hex[:12]
         job = {
@@ -602,7 +576,6 @@ def register_scenevideo_routes(app):
             "event_description": event_description,
             "text_api_key": text_api_key,
             "tts_api_key": tts_api_key,
-            "image_api_keys": image_api_keys,
             "voice": voice,
             "stop_requested": False,
             "logs": [],
