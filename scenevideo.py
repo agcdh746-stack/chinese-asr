@@ -452,50 +452,37 @@ def build_scene_clip(image_path, audio_path, duration_sec, out_path, zoom_in=Tru
 
 def concat_with_crossfade(clip_paths, out_path, fade_dur=0.4):
     """
-    একাধিক scene clip-কে ছোট crossfade (xfade) দিয়ে জোড়া লাগায়।
-    ffmpeg-এর xfade filter chain ব্যবহার করা হয়েছে (transition: fade)।
+    RAM-সাশ্রয়ী simple concat — ffmpeg concat demuxer দিয়ে।
+    xfade বাদ, stream copy যেখানে সম্ভব।
     """
     if len(clip_paths) == 1:
         shutil.copy(clip_paths[0], out_path)
         return out_path
 
-    durations = [_ffprobe_duration(p) for p in clip_paths]
-
-    inputs = []
-    for p in clip_paths:
-        inputs += ["-i", p]
-
-    filter_parts = []
-    audio_parts = []
-    running_offset = 0.0
-    prev_v = "0:v"
-    prev_a = "0:a"
-
-    for i in range(1, len(clip_paths)):
-        offset = running_offset + durations[i - 1] - fade_dur
-        v_label = f"v{i}"
-        a_label = f"a{i}"
-        filter_parts.append(
-            f"[{prev_v}][{i}:v]xfade=transition=fade:duration={fade_dur}:offset={offset:.3f}[{v_label}]"
-        )
-        audio_parts.append(
-            f"[{prev_a}][{i}:a]acrossfade=d={fade_dur}[{a_label}]"
-        )
-        prev_v = v_label
-        prev_a = a_label
-        running_offset = offset + fade_dur
-
-    filter_complex = ";".join(filter_parts + audio_parts)
+    # concat list file বানাও
+    list_path = out_path + "_concat.txt"
+    with open(list_path, "w") as f:
+        for p in clip_paths:
+            f.write("file '" + p + "'\n")
 
     cmd = [
-        "ffmpeg", "-y", *inputs,
-        "-filter_complex", filter_complex,
-        "-map", f"[{prev_v}]", "-map", f"[{prev_a}]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k",
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_path,
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-threads", "1",
+        "-c:a", "aac", "-b:a", "96k",
         out_path,
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
+    try:
+        subprocess.run(cmd, capture_output=True, check=True)
+    finally:
+        if os.path.exists(list_path):
+            os.remove(list_path)
     return out_path
 
 
