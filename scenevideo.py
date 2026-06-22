@@ -54,10 +54,10 @@ TEXT_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{TEXT_
 # Pollinations image — key ছাড়া সম্পূর্ণ ফ্রি
 POLLINATIONS_IMAGE_URL = "https://image.pollinations.ai/prompt/{prompt}"
 POLLINATIONS_MODEL     = "flux"          # flux | flux-realism | turbo
-POLLINATIONS_IMG_W     = 1080
-POLLINATIONS_IMG_H     = 1920
+POLLINATIONS_IMG_W     = 720
+POLLINATIONS_IMG_H     = 1280
 
-VIDEO_W, VIDEO_H = 1080, 1920   # vertical (shorts/reels স্টাইল)
+VIDEO_W, VIDEO_H = 720, 1280    # vertical (shorts/reels স্টাইল) — Railway RAM বাঁচাতে
 FPS = 30
 
 # ───────────────────────── job ফাইল হেল্পার ────────────────────────────
@@ -428,15 +428,20 @@ def _zoompan_filter(duration_sec, zoom_in=True):
 
 
 def build_scene_clip(image_path, audio_path, duration_sec, out_path, zoom_in=True):
-    """একটা scene-এর ছবি+অডিও থেকে Ken Burns zoom সহ একটা video clip বানায়।"""
+    """একটা scene-এর ছবি+অডিও থেকে Ken Burns zoom সহ একটা video clip বানায়।
+    RAM বাঁচাতে: ultrafast preset, কম bitrate, threads=1"""
     vf = _zoompan_filter(duration_sec, zoom_in=zoom_in)
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-i", image_path,
         "-i", audio_path,
         "-vf", vf,
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-threads", "1",
+        "-c:a", "aac", "-b:a", "96k",
         "-t", str(duration_sec),
         "-shortest",
         out_path,
