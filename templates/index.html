@@ -391,8 +391,7 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
       <label style="margin-top:10px">TTS API Key <span style="font-size:.78rem;color:#777">(একটাই — voice generation এর জন্য)</span></label>
       <input type="text" id="svTtsKey" placeholder="AIzaSy..." style="font-family:monospace">
 
-      <label style="margin-top:10px">Image API Keys <span style="font-size:.78rem;color:#777">(একাধিক হলে কমা দিয়ে আলাদা করো — rate-limit rotation এর জন্য)</span></label>
-      <textarea id="svImageKeys" placeholder="key1,key2,key3" style="min-height:60px;font-family:monospace;font-size:.85rem"></textarea>
+      <div style="margin-top:10px;padding:8px 12px;background:#1a2a1a;border-radius:6px;font-size:.82rem;color:#4caf50">🖼️ ছবি: Pollinations.ai (ফ্রি, key লাগবে না)</div>
 
       <div class="row" style="margin-top:10px">
         <div>
@@ -1372,7 +1371,6 @@ let _svJobId = null;
 function svSaveSettings(){
   localStorage.setItem('sv_text_key',  document.getElementById('svTextKey').value.trim());
   localStorage.setItem('sv_tts_key',   document.getElementById('svTtsKey').value.trim());
-  localStorage.setItem('sv_image_keys',document.getElementById('svImageKeys').value.trim());
   localStorage.setItem('sv_voice',     document.getElementById('svVoice').value);
   const m = document.getElementById('svSaveMsg');
   m.textContent='✅ Saved!'; setTimeout(()=>m.textContent='',2000);
@@ -1386,7 +1384,6 @@ function svLoadSettings(){
   };
   get('svTextKey',   'sv_text_key');
   get('svTtsKey',    'sv_tts_key');
-  get('svImageKeys', 'sv_image_keys');
   get('svVoice',     'sv_voice');
 
   // আগের চলমান job থাকলে recover করো
@@ -1419,15 +1416,11 @@ async function _svTryRecover(jobId){
 async function svStart(){
   const textKey   = document.getElementById('svTextKey').value.trim();
   const ttsKey    = document.getElementById('svTtsKey').value.trim();
-  const imageKeysRaw = document.getElementById('svImageKeys').value.trim();
   const voice     = document.getElementById('svVoice').value;
   const eventDesc = document.getElementById('svEventDesc').value.trim();
 
   if(!textKey || !ttsKey) { alert('Text API key এবং TTS API key দুটোই দাও'); return; }
-  if(!imageKeysRaw)        { alert('অন্তত একটা Image API key দাও'); return; }
   if(!eventDesc)           { alert('ঘটনার বিবরণ লেখো'); return; }
-
-  const imageKeys = imageKeysRaw.split(',').map(s=>s.trim()).filter(Boolean);
 
   document.getElementById('svStartBtn').disabled=true;
   document.getElementById('svStopBtn').style.display='block';
@@ -1444,7 +1437,6 @@ async function svStart(){
         event_description: eventDesc,
         text_api_key: textKey,
         tts_api_key: ttsKey,
-        image_api_keys: imageKeys,
         voice: voice
       })
     });
