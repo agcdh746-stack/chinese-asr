@@ -412,11 +412,11 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
       <!-- Stock API Keys (hidden when AI only) -->
       <div id="svStockKeys" style="margin-top:12px;padding:12px;background:#0d1a0d;border-radius:8px;border:1px solid #1f3a1f">
         <div style="font-size:.8rem;color:#4caf50;margin-bottom:8px">📡 Stock API Keys (যেটা আছে সেটাই দাও, সবগুলো লাগবে না)</div>
-        <label style="font-size:.82rem">Pexels API Key <span style="color:#666;font-size:.75rem">(video + image)</span></label>
+        <label style="font-size:.82rem">Pexels API Key <span style="color:#666;font-size:.75rem">(video + image, priority 1)</span></label>
         <input type="text" id="svPexelsKey" placeholder="xxxxxx..." style="font-family:monospace;font-size:.82rem">
-        <label style="font-size:.82rem;margin-top:6px">Pixabay API Key <span style="color:#666;font-size:.75rem">(video + image)</span></label>
+        <label style="font-size:.82rem;margin-top:6px">Pixabay API Key <span style="color:#666;font-size:.75rem">(video + image, priority 2)</span></label>
         <input type="text" id="svPixabayKey" placeholder="xxxxxx..." style="font-family:monospace;font-size:.82rem">
-        <label style="font-size:.82rem;margin-top:6px">Unsplash Access Key <span style="color:#666;font-size:.75rem">(image only)</span></label>
+        <label style="font-size:.82rem;margin-top:6px">Unsplash Access Key <span style="color:#666;font-size:.75rem">(image only, priority 3)</span></label>
         <input type="text" id="svUnsplashKey" placeholder="xxxxxx..." style="font-family:monospace;font-size:.82rem">
       </div>
 
@@ -424,9 +424,62 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
         Priority: Pexels video → Pixabay video → Pexels image → Unsplash image → AI fallback
       </div>
 
+      <!-- Visual Style + Resolution -->
+      <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px">
+          <label style="font-size:.82rem;display:block;margin-bottom:4px">🎨 Visual Style</label>
+          <select id="svVisualStyle" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#ddd;padding:8px;border-radius:6px;font-size:.85rem">
+            <option value="realistic">🌄 Realistic</option>
+            <option value="cartoon">🎨 Cartoon / Animation</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label style="font-size:.82rem;display:block;margin-bottom:4px">📐 Resolution</label>
+          <select id="svResolution" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#ddd;padding:8px;border-radius:6px;font-size:.85rem">
+            <option value="720x1280" selected>720×1280 (9:16 Shorts)</option>
+            <option value="1080x1920">1080×1920 (9:16 HD)</option>
+            <option value="1920x1080">1920×1080 (16:9 HD)</option>
+            <option value="1280x720">1280×720 (16:9 720p)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Transition + Background Music -->
+      <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px">
+          <label style="font-size:.82rem;display:block;margin-bottom:4px">🔀 Transition</label>
+          <select id="svTransition" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#ddd;padding:8px;border-radius:6px;font-size:.85rem">
+            <option value="fade" selected>Fade</option>
+            <option value="slide">Slide</option>
+            <option value="none">None (Direct Cut)</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label style="font-size:.82rem;display:block;margin-bottom:4px">🎵 Background Music</label>
+          <select id="svBgMusic" onchange="svOnMusicChange()" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#ddd;padding:8px;border-radius:6px;font-size:.85rem">
+            <option value="none" selected>None</option>
+            <option value="epic">Epic Cinematic</option>
+            <option value="upbeat">Upbeat Corporate</option>
+            <option value="relaxing">Relaxing Ambient</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Music Volume (hidden by default) -->
+      <div id="svMusicVolRow" style="margin-top:8px;display:none">
+        <label style="font-size:.8rem;display:flex;justify-content:space-between">
+          <span>🔊 Music Volume</span>
+          <span id="svMusicVolLabel" style="color:#888">10%</span>
+        </label>
+        <input type="range" id="svMusicVol" min="0" max="1" step="0.05" value="0.1"
+          oninput="document.getElementById('svMusicVolLabel').textContent=Math.round(this.value*100)+'%'"
+          style="width:100%;margin-top:4px;accent-color:#4caf50">
+      </div>
+
+      <!-- Voice + TTS info -->
       <div class="row" style="margin-top:10px">
         <div>
-          <label>Voice</label>
+          <label>🎤 Voice <span style="font-size:.73rem;color:#555;font-weight:400">(Gemini TTS key থাকলে কাজ করবে)</span></label>
           <select id="svVoice">
             <option value="Charon">Charon (male)</option>
             <option value="Schedar">Schedar (male)</option>
@@ -439,7 +492,11 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
           </select>
         </div>
       </div>
-      <button onclick="svSaveSettings()" class="btn-sm" style="margin-top:8px">💾 Save Settings</button>
+      <div style="font-size:.75rem;color:#555;margin-top:4px;padding:5px 8px;background:#0a0a0a;border-radius:5px">
+        💡 TTS key না দিলে → StreamElements (English, free) auto fallback হবে
+      </div>
+
+      <button onclick="svSaveSettings()" class="btn-sm" style="margin-top:10px">💾 Save Settings</button>
       <div id="svSaveMsg" style="font-size:.82rem;color:#4caf50;margin-top:4px"></div>
     </div>
 
@@ -1400,37 +1457,58 @@ const SV_JOB_KEY = 'sv_job_id';
 let _svJobId = null;
 
 function svSaveSettings(){
-  localStorage.setItem('sv_text_key',   document.getElementById('svTextKey').value.trim());
-  localStorage.setItem('sv_tts_key',    document.getElementById('svTtsKey').value.trim());
-  localStorage.setItem('sv_voice',      document.getElementById('svVoice').value);
-  localStorage.setItem('sv_media_mode', document.querySelector('input[name="svMediaMode"]:checked')?.value || 'hybrid');
-  localStorage.setItem('sv_pexels_key',   document.getElementById('svPexelsKey').value.trim());
-  localStorage.setItem('sv_pixabay_key',  document.getElementById('svPixabayKey').value.trim());
-  localStorage.setItem('sv_unsplash_key', document.getElementById('svUnsplashKey').value.trim());
+  localStorage.setItem('sv_text_key',    document.getElementById('svTextKey').value.trim());
+  localStorage.setItem('sv_tts_key',     document.getElementById('svTtsKey').value.trim());
+  localStorage.setItem('sv_voice',       document.getElementById('svVoice').value);
+  localStorage.setItem('sv_media_mode',  document.querySelector('input[name="svMediaMode"]:checked')?.value || 'hybrid');
+  localStorage.setItem('sv_pexels_key',  document.getElementById('svPexelsKey').value.trim());
+  localStorage.setItem('sv_pixabay_key', document.getElementById('svPixabayKey').value.trim());
+  localStorage.setItem('sv_unsplash_key',document.getElementById('svUnsplashKey').value.trim());
+  localStorage.setItem('sv_visual_style',document.getElementById('svVisualStyle').value);
+  localStorage.setItem('sv_resolution',  document.getElementById('svResolution').value);
+  localStorage.setItem('sv_transition',  document.getElementById('svTransition').value);
+  localStorage.setItem('sv_bg_music',    document.getElementById('svBgMusic').value);
+  localStorage.setItem('sv_music_vol',   document.getElementById('svMusicVol').value);
   const m = document.getElementById('svSaveMsg');
   m.textContent='✅ Saved!'; setTimeout(()=>m.textContent='',2000);
 }
 
 function svLoadSettings(){
-  const get = (id, key) => {
-    const v = localStorage.getItem(key);
+  const get = (id, key, fallback='') => {
+    const v = localStorage.getItem(key) || fallback;
     const el = document.getElementById(id);
-    if (v && el) el.value = v;
+    if(v && el) el.value = v;
   };
-  get('svTextKey',    'sv_text_key');
-  get('svTtsKey',     'sv_tts_key');
-  get('svVoice',      'sv_voice');
-  get('svPexelsKey',  'sv_pexels_key');
-  get('svPixabayKey', 'sv_pixabay_key');
-  get('svUnsplashKey','sv_unsplash_key');
+  get('svTextKey',     'sv_text_key');
+  get('svTtsKey',      'sv_tts_key');
+  get('svVoice',       'sv_voice',       'Charon');
+  get('svPexelsKey',   'sv_pexels_key');
+  get('svPixabayKey',  'sv_pixabay_key');
+  get('svUnsplashKey', 'sv_unsplash_key');
+  get('svVisualStyle', 'sv_visual_style','realistic');
+  get('svResolution',  'sv_resolution',  '720x1280');
+  get('svTransition',  'sv_transition',  'fade');
+  get('svBgMusic',     'sv_bg_music',    'none');
+  get('svMusicVol',    'sv_music_vol',   '0.1');
+  // music volume label sync
+  const vol = parseFloat(localStorage.getItem('sv_music_vol') || '0.1');
+  const lbl = document.getElementById('svMusicVolLabel');
+  if(lbl) lbl.textContent = Math.round(vol*100)+'%';
   // media mode radio
   const savedMode = localStorage.getItem('sv_media_mode') || 'hybrid';
   const modeRadio = document.querySelector(`input[name="svMediaMode"][value="${savedMode}"]`);
   if(modeRadio) modeRadio.checked = true;
   svOnModeChange();
+  svOnMusicChange();
   // আগের চলমান job recover
   const savedId = localStorage.getItem(SV_JOB_KEY);
   if(savedId) _svTryRecover(savedId);
+}
+
+function svOnMusicChange(){
+  const val = document.getElementById('svBgMusic')?.value;
+  const row = document.getElementById('svMusicVolRow');
+  if(row) row.style.display = (val && val !== 'none') ? 'block' : 'none';
 }
 
 function svOnModeChange(){
@@ -1469,21 +1547,24 @@ async function _svTryRecover(jobId){
 }
 
 async function svStart(){
-  const textKey   = document.getElementById('svTextKey').value.trim();
-  const ttsKey    = document.getElementById('svTtsKey').value.trim();
-  const voice     = document.getElementById('svVoice').value;
-  const eventDesc = document.getElementById('svEventDesc').value.trim();
-  const mediaMode  = document.querySelector('input[name="svMediaMode"]:checked')?.value || 'hybrid';
-  const pexelsKey  = document.getElementById('svPexelsKey').value.trim();
-  const pixabayKey = document.getElementById('svPixabayKey').value.trim();
-  const unsplashKey= document.getElementById('svUnsplashKey').value.trim();
+  const textKey     = document.getElementById('svTextKey').value.trim();
+  const ttsKey      = document.getElementById('svTtsKey').value.trim();
+  const voice       = document.getElementById('svVoice').value;
+  const eventDesc   = document.getElementById('svEventDesc').value.trim();
+  const mediaMode   = document.querySelector('input[name="svMediaMode"]:checked')?.value || 'hybrid';
+  const visualStyle = document.getElementById('svVisualStyle').value;
+  const resolution  = document.getElementById('svResolution').value;
+  const transition  = document.getElementById('svTransition').value;
+  const bgMusic     = document.getElementById('svBgMusic').value;
+  const musicVol    = parseFloat(document.getElementById('svMusicVol').value);
+  const pexelsKey   = document.getElementById('svPexelsKey').value.trim();
+  const pixabayKey  = document.getElementById('svPixabayKey').value.trim();
+  const unsplashKey = document.getElementById('svUnsplashKey').value.trim();
 
-  if(!textKey || !ttsKey) { alert('Text API key এবং TTS API key দুটোই দাও'); return; }
-  if(!eventDesc)           { alert('ঘটনার বিবরণ লেখো'); return; }
+  if(!textKey)   { alert('Script/Text API key দাও (Gemini)'); return; }
+  if(!eventDesc) { alert('ঘটনার বিবরণ লেখো'); return; }
   if(['stock','hybrid'].includes(mediaMode) && !pexelsKey && !pixabayKey && !unsplashKey){
     alert('Stock mode-এ কমপক্ষে একটা stock API key দাও (Pexels / Pixabay / Unsplash)');
-    document.getElementById('svStartBtn').disabled=false;
-    document.getElementById('svStopBtn').style.display='none';
     return;
   }
 
@@ -1502,8 +1583,13 @@ async function svStart(){
         event_description: eventDesc,
         text_api_key: textKey,
         tts_api_key: ttsKey,
-        voice: voice,
+        voice,
         media_mode: mediaMode,
+        visual_style: visualStyle,
+        resolution,
+        transition_style: transition,
+        background_music: bgMusic,
+        music_volume: musicVol,
         pexels_key: pexelsKey,
         pixabay_key: pixabayKey,
         unsplash_key: unsplashKey,
