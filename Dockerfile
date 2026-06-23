@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir \
   flask httpx[socks] edge-tts \
   aiofiles aiosqlite lxml pyyaml rich uvicorn fastapi emoji \
-  "yt-dlp[default]" instaloader \
+  "yt-dlp[default]" instaloader gradio_client \
   && yt-dlp --version \
   && instaloader --version
 
