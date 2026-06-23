@@ -35,7 +35,7 @@ COPY app.py ./
 COPY scenevideo.py ./
 COPY templates ./templates
 
-RUN mkdir -p /tmp/asr /app/data/cookies /app/data /app/ks-downloader/Volume
+RUN mkdir -p /tmp/asr /tmp/asr/colab_jobs /app/data/cookies /app/data /app/ks-downloader/Volume
 
 ENV PORT=3000 \
   TEMP_DIR=/tmp/asr \
@@ -43,7 +43,11 @@ ENV PORT=3000 \
   CONFIG_FILE=/app/data/config.json \
   XRAY_BIN=/usr/local/bin/xray \
   XRAY_CONFIG=/app/data/xray-config.json \
-  PYTHONUNBUFFERED=1
+  PYTHONUNBUFFERED=1 \
+  # Colab worker — Telegram /setworker দিয়ে runtime-এ set হয়
+  COLAB_WORKER_URL="" \
+  TELEGRAM_BOT_TOKEN="" \
+  TG_WEBHOOK_SECRET=""
 
 EXPOSE 3000
 
