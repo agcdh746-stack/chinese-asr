@@ -1,24 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 scenevideo.py — Hybrid Scene Video (v2)
-─────────────────────────────────────────────────────────────────────────
-নতুন features:
-  - Smart search query generation (visual_style aware — realistic/cartoon)
-  - StreamElements TTS fallback (Gemini TTS না থাকলে free fallback)
-  - Resolution: 16:9 (1920x1080, 1280x720) / 9:16 (720x1280)
-  - Transition: fade (xfade) / slide (xfade) / none (direct concat)
-    xfade offset = scene_duration - transition_duration (OpenMontage approach)
-  - Background music: epic / upbeat / relaxing / none (free hosted)
-  - Music volume control
-  - Visual style: realistic / cartoon (stock search query-তে apply হয়)
-  - Media mode: ai / stock / hybrid
-  - Stock priority: Pexels video → Pixabay video → Pexels image → Unsplash image
-─────────────────────────────────────────────────────────────────────────
 """
 
 import os
 import re
 import json
+import math
 import time
 import uuid
 import base64
@@ -42,43 +30,36 @@ TEXT_MODEL = "gemini-2.5-flash"
 TTS_ENDPOINT  = f"https://generativelanguage.googleapis.com/v1beta/models/{TTS_MODEL}:generateContent"
 TEXT_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{TEXT_MODEL}:generateContent"
 
-# StreamElements TTS — সম্পূর্ণ ফ্রি, key লাগে না
-# voices: Brian, Amy, Emma, Joanna, Justin, Matthew, Ivy, Kendra, Kimberly, Salli, Joey, Russell
 STREAMELEMENTS_TTS_URL = "https://api.streamelements.com/kappa/v2/speech"
 STREAMELEMENTS_VOICE   = "Brian"
 
-# Pollinations — free AI image
 POLLINATIONS_MODEL = "flux"
 
-# Stock API endpoints
 PEXELS_VIDEO_URL   = "https://api.pexels.com/videos/search"
 PEXELS_IMAGE_URL   = "https://api.pexels.com/v1/search"
 PIXABAY_VIDEO_URL  = "https://pixabay.com/api/videos/"
 PIXABAY_IMAGE_URL  = "https://pixabay.com/api/"
 UNSPLASH_IMAGE_URL = "https://api.unsplash.com/search/photos"
 
-# Background music — free hosted tracks (same source as reference project)
 MUSIC_TRACKS = {
     "epic":     "https://storage.googleapis.com/aistudio-hosting/music/cinematic-documentary.mp3",
     "upbeat":   "https://storage.googleapis.com/aistudio-hosting/music/corporate-upbeat.mp3",
     "relaxing": "https://storage.googleapis.com/aistudio-hosting/music/relaxing-ambient.mp3",
 }
 
-MIN_CLIP_DURATION  = 2.0
-TRANSITION_DUR     = 0.5   # xfade duration (seconds)
-
-# ───────────────────────── resolution helper ────────────────────────────
+MIN_CLIP_DURATION = 2.0
+TRANSITION_DUR    = 0.5
+CLIP_INTERVAL     = 4.0   # প্রতি ৪ সেকেন্ডে নতুন visual
 
 RESOLUTIONS = {
     "1920x1080": (1920, 1080),
     "1280x720":  (1280, 720),
-    "720x1280":  (720, 1280),   # 9:16 vertical (Shorts)
-    "1080x1920": (1080, 1920),  # 9:16 vertical (Reels)
+    "720x1280":  (720, 1280),
+    "1080x1920": (1080, 1920),
 }
 
 def _res(job):
-    key = job.get("resolution", "720x1280")
-    return RESOLUTIONS.get(key, (720, 1280))
+    return RESOLUTIONS.get(job.get("resolution", "720x1280"), (720, 1280))
 
 # ───────────────────────── job helpers ──────────────────────────────────
 
@@ -102,13 +83,6 @@ def job_log(job, msg, lvl="info"):
 
 
 # ───────────────────────── 1. Script + Scene Breakdown ──────────────────
-# KEY INSIGHT (reference project থেকে):
-# Gemini-কে দিয়ে scene description → stock search query বানানো হয়,
-# visual_style অনুযায়ী আলাদা prompt দেওয়া হয়।
-# realistic: literal 2-5 word descriptive keyword
-# cartoon:   keyword + "illustration"/"animation"/"cartoon" suffix
-# আমরা আরো উন্নত করেছি: narration text + scene description দুটোই context হিসেবে দিচ্ছি
-# এবং আলাদা করে stock_query, ai_prompt, pixabay_video_type return করছি।
 
 SCENE_SYSTEM_PROMPT = """তুমি একজন বাংলা নিউজ ভিডিও স্ক্রিপ্ট রাইটার ও visual director।
 ইউজার একটা বাস্তব ঘটনার বিবরণ দেবে। তোমার কাজ:
@@ -117,9 +91,7 @@ SCENE_SYSTEM_PROMPT = """তুমি একজন বাংলা নিউজ 
 2. প্রতিটা scene-এ:
    - narration: বাংলা ১-২ বাক্য (সাংবাদিকতার ভাষায়, নিরপেক্ষ)
    - stock_query: ইংরেজি ২-৪ word, Pexels/Pixabay-তে search করার জন্য।
-     VISUAL_STYLE placeholder অনুযায়ী:
-       realistic → literal descriptive keyword (e.g. "ambulance highway accident")
-       cartoon   → keyword + "illustration" বা "animation" (e.g. "ambulance illustration")
+     VISUAL_STYLE_NOTE
      নিয়ম: simple noun+adjective, কোনো বাংলা শব্দ না, কোনো proper noun না
    - ai_prompt: ইংরেজিতে Pollinations-এর জন্য detailed visual description।
      সবসময় "illustrated editorial news-style digital painting" style।
@@ -139,14 +111,13 @@ JSON ফরম্যাট (শুধু JSON, অন্য কিছু না)
 """
 
 def generate_script_and_scenes(event_description, api_key, visual_style="realistic"):
-    # visual_style অনুযায়ী prompt customize
     style_note = (
         "realistic → stock_query must be literal descriptive (e.g. 'fire truck emergency')"
         if visual_style == "realistic"
         else "cartoon → stock_query must include 'illustration' or 'animation' (e.g. 'fire truck illustration')"
     )
     prompt = (
-        SCENE_SYSTEM_PROMPT.replace("VISUAL_STYLE placeholder অনুযায়ী:", f"visual style: {style_note}\n     ")
+        SCENE_SYSTEM_PROMPT.replace("VISUAL_STYLE_NOTE", style_note)
         + f"\n\nঘটনার বিবরণ:\n{event_description}"
     )
     payload = {
@@ -170,13 +141,10 @@ def generate_script_and_scenes(event_description, api_key, visual_style="realist
 
 
 # ───────────────────────── 2. TTS ───────────────────────────────────────
-# PRIMARY: Gemini TTS (key দিলে)
-# FALLBACK: StreamElements Brian (free, no key) — reference project approach
 
 BREAK_TAG = '<break time="700ms"/>'
 
 def synthesize_full_audio_gemini(scenes, api_key, voice, out_wav_path):
-    """Gemini TTS — একটামাত্র call, সব scene একসাথে"""
     full_text = f" {BREAK_TAG} ".join(s["narration"].strip() for s in scenes)
     payload = {
         "contents": [{"parts": [{"text": full_text}]}],
@@ -208,27 +176,21 @@ def synthesize_full_audio_gemini(scenes, api_key, voice, out_wav_path):
 
 
 def _streamelements_tts_chunk(text, voice=STREAMELEMENTS_VOICE):
-    """StreamElements TTS — free, no key needed"""
     url = f"{STREAMELEMENTS_TTS_URL}?voice={voice}&text={urllib.parse.quote(text)}"
     with httpx.Client(timeout=30) as client:
         resp = client.get(url)
     if resp.status_code != 200:
         raise RuntimeError(f"StreamElements TTS failed ({resp.status_code})")
-    return resp.content  # mp3 bytes
+    return resp.content
 
 
 def synthesize_full_audio_streamelements(scenes, out_mp3_path, voice=STREAMELEMENTS_VOICE):
-    """
-    StreamElements TTS fallback — প্রতিটা scene আলাদা MP3 বানিয়ে concat করে।
-    Reference project: 200 char chunks, retry 3x
-    """
     tmp_dir = out_mp3_path + "_parts"
     os.makedirs(tmp_dir, exist_ok=True)
     part_files = []
 
     for idx, scene in enumerate(scenes):
         text = scene["narration"].strip()
-        # 200 char chunks (reference project approach)
         chunks = [text[i:i+200] for i in range(0, len(text), 200)]
         chunk_files = []
         for ci, chunk in enumerate(chunks):
@@ -243,19 +205,16 @@ def synthesize_full_audio_streamelements(scenes, out_mp3_path, voice=STREAMELEME
                 except Exception as e:
                     if attempt == 2: raise
                     time.sleep(1 * (attempt + 1))
-        # chunk গুলো concat করে scene MP3
         scene_mp3 = os.path.join(tmp_dir, f"scene_{idx:02d}.mp3")
         if len(chunk_files) == 1:
             shutil.copy(chunk_files[0], scene_mp3)
         else:
             lst = scene_mp3 + ".txt"
             with open(lst, "w") as f:
-                for p in chunk_files:
-                    f.write(f"file '{p}'\n")
+                for p in chunk_files: f.write(f"file '{p}'\n")
             subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0",
                             "-i", lst, "-c", "copy", scene_mp3], capture_output=True)
         part_files.append(scene_mp3)
-        # scene-এর মাঝে 700ms silence যোগ করো (BREAK_TAG এর equivalent)
         if idx < len(scenes) - 1:
             silence_path = os.path.join(tmp_dir, f"silence_{idx:02d}.mp3")
             subprocess.run([
@@ -264,11 +223,9 @@ def synthesize_full_audio_streamelements(scenes, out_mp3_path, voice=STREAMELEME
             ], capture_output=True)
             part_files.append(silence_path)
 
-    # সব parts concat → final MP3
     lst_path = out_mp3_path + "_list.txt"
     with open(lst_path, "w") as f:
-        for p in part_files:
-            f.write(f"file '{p}'\n")
+        for p in part_files: f.write(f"file '{p}'\n")
     subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0",
                     "-i", lst_path, "-c", "copy", out_mp3_path], capture_output=True, check=True)
     shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -276,12 +233,6 @@ def synthesize_full_audio_streamelements(scenes, out_mp3_path, voice=STREAMELEME
 
 
 def synthesize_audio(job, scenes, job_dir):
-    """
-    TTS entry point:
-    - Gemini key আছে → Gemini TTS → WAV
-    - নেই / fail → StreamElements → MP3 → WAV convert
-    Returns: path to final WAV file
-    """
     tts_key = job.get("tts_api_key", "").strip()
     voice   = job.get("voice", "Charon")
     raw_wav = os.path.join(job_dir, "full_audio.wav")
@@ -295,12 +246,10 @@ def synthesize_audio(job, scenes, job_dir):
         except Exception as e:
             job_log(job, f"⚠️  Gemini TTS ব্যর্থ ({e}) — StreamElements fallback...", "warn")
 
-    # StreamElements fallback
     job_log(job, "🎙️  StreamElements TTS (free fallback) দিয়ে audio বানানো হচ্ছে...")
-    raw_mp3 = os.path.join(job_dir, "full_audio.mp3")
+    raw_mp3  = os.path.join(job_dir, "full_audio.mp3")
     se_voice = job.get("se_voice", STREAMELEMENTS_VOICE)
     synthesize_full_audio_streamelements(scenes, raw_mp3, se_voice)
-    # MP3 → WAV convert
     subprocess.run(["ffmpeg", "-y", "-i", raw_mp3, "-ar", "24000", "-ac", "1", raw_wav],
                    capture_output=True, check=True)
     job_log(job, "✅ StreamElements TTS সম্পন্ন")
@@ -373,10 +322,6 @@ def split_audio_by_silence(wav_path, expected_scene_count, out_dir):
 
 
 # ───────────────────────── 4. Stock Media ───────────────────────────────
-# KEY INSIGHT (reference project):
-# visual_style="cartoon" → Pixabay-তে video_type=animation, image_type=illustration
-# visual_style="realistic" → কোনো filter নেই, normal search
-# stock_query-তে already cartoon keyword থাকে (Gemini-ই দিয়েছে)
 
 def _pixabay_video_type(visual_style):
     return "animation" if visual_style == "cartoon" else "film"
@@ -385,76 +330,115 @@ def _pixabay_image_type(visual_style):
     return "illustration" if visual_style == "cartoon" else "photo"
 
 
-def _search_pexels_video(query, api_key, target_dur, visual_style):
+def _build_fallback_queries(query):
+    queries = [query]
+    words = query.split()
+    if len(words) >= 2:
+        queries.append(words[0])
+        queries.append(" ".join(words[:2]))
+        queries.append(words[-1])
+    queries += ["news broadcast", "city street", "people walking", "nature landscape"]
+    seen = set()
+    return [q for q in queries if q and not (q in seen or seen.add(q))]
+
+
+def _pexels_video_search_one(query, api_key, orientation, page=1):
     try:
-        params = {"query": query, "per_page": 10, "size": "medium"}
-        # orientation: portrait for vertical video, landscape for horizontal
-        params["orientation"] = "portrait"
+        params = {"query": query, "per_page": 15, "page": page,
+                  "orientation": orientation, "size": "medium"}
         r = httpx.get(PEXELS_VIDEO_URL, headers={"Authorization": api_key},
-                      params=params, timeout=15)
-        if r.status_code != 200: return None
+                      params=params, timeout=20)
+        if r.status_code != 200: return []
         videos = r.json().get("videos", [])
-        if not videos: return None
-        valid = [v for v in videos if v.get("duration", 0) >= MIN_CLIP_DURATION]
-        if not valid: valid = videos
-        gte = [v for v in valid if v.get("duration", 0) >= target_dur]
-        chosen = gte[0] if gte else sorted(valid, key=lambda v: v.get("duration",0), reverse=True)[0]
-        files = chosen.get("video_files", [])
-        portrait = [f for f in files if f.get("width",9999) <= 1080]
-        best = sorted(portrait or files, key=lambda f: f.get("width",0), reverse=True)[0] if (portrait or files) else None
-        if not best: return None
-        return {"url": best["link"], "duration": chosen["duration"], "kind": "video", "source": "pexels"}
+        return [v for v in videos if v.get("duration", 0) >= MIN_CLIP_DURATION]
     except Exception as e:
-        print(f"[stock] Pexels video error: {e}", flush=True); return None
+        print(f"[pexels] video search error ({query}): {e}", flush=True)
+        return []
 
 
-def _search_pixabay_video(query, api_key, target_dur, visual_style):
+def _pick_best_pexels_video(videos, orientation, w, h):
+    if not videos: return None
+    chosen = videos[0]
+    files = chosen.get("video_files", [])
+    if not files: return None
+    if orientation == "portrait":
+        candidates = [f for f in files if f.get("height", 0) >= f.get("width", 0)] or files
+    else:
+        candidates = [f for f in files if f.get("width", 0) >= f.get("height", 0)] or files
+
+    def res_diff(f):
+        return abs(f.get("width", 0) - w) + abs(f.get("height", 0) - h)
+
+    best = sorted(candidates, key=res_diff)[0]
+    return {"url": best["link"], "duration": chosen["duration"],
+            "kind": "video", "source": "pexels"}
+
+
+def _pexels_image_search_one(query, api_key, orientation):
     try:
-        params = {
-            "key": api_key, "q": query, "per_page": 10,
-            "video_type": _pixabay_video_type(visual_style),
-            "safesearch": "true",
-        }
-        r = httpx.get(PIXABAY_VIDEO_URL, params=params, timeout=15)
-        if r.status_code != 200: return None
-        hits = r.json().get("hits", [])
-        if not hits: return None
-        valid = [h for h in hits if h.get("duration", 0) >= MIN_CLIP_DURATION]
-        if not valid: valid = hits
-        gte = [h for h in valid if h.get("duration", 0) >= target_dur]
-        chosen = gte[0] if gte else sorted(valid, key=lambda h: h.get("duration",0), reverse=True)[0]
-        vids = chosen.get("videos", {})
-        for q in ("medium", "small", "large"):
-            v = vids.get(q)
-            if v and v.get("url"):
-                return {"url": v["url"], "duration": chosen["duration"], "kind": "video", "source": "pixabay"}
-        return None
-    except Exception as e:
-        print(f"[stock] Pixabay video error: {e}", flush=True); return None
-
-
-def _search_pexels_image(query, api_key, visual_style):
-    try:
-        params = {"query": query, "per_page": 5, "orientation": "portrait"}
+        params = {"query": query, "per_page": 10, "orientation": orientation}
         r = httpx.get(PEXELS_IMAGE_URL, headers={"Authorization": api_key},
                       params=params, timeout=15)
         if r.status_code != 200: return None
         photos = r.json().get("photos", [])
         if not photos: return None
         src = photos[0].get("src", {})
-        url = src.get("portrait") or src.get("large") or src.get("original")
+        url = (src.get("portrait") if orientation == "portrait" else src.get("landscape")) \
+              or src.get("large") or src.get("original")
         return {"url": url, "kind": "image", "source": "pexels"} if url else None
     except Exception as e:
-        print(f"[stock] Pexels image error: {e}", flush=True); return None
+        print(f"[pexels] image search error ({query}): {e}", flush=True)
+        return None
+
+
+def fetch_pexels_media(query, pexels_key, w=720, h=1280, slot=0):
+    orientation = "portrait" if h > w else "landscape"
+    queries = _build_fallback_queries(query)
+    page = (slot % 3) + 1
+
+    for q in queries:
+        videos = _pexels_video_search_one(q, pexels_key, orientation, page=page)
+        if not videos and page > 1:
+            videos = _pexels_video_search_one(q, pexels_key, orientation, page=1)
+        result = _pick_best_pexels_video(videos, orientation, w, h)
+        if result:
+            print(f"[pexels] video: query='{q}' page={page} dur={result['duration']}s", flush=True)
+            return result
+
+    for q in queries:
+        result = _pexels_image_search_one(q, pexels_key, orientation)
+        if result:
+            print(f"[pexels] image: query='{q}'", flush=True)
+            return result
+    return None
+
+
+def _search_pixabay_video(query, api_key, visual_style):
+    try:
+        params = {"key": api_key, "q": query, "per_page": 10,
+                  "video_type": _pixabay_video_type(visual_style), "safesearch": "true"}
+        r = httpx.get(PIXABAY_VIDEO_URL, params=params, timeout=15)
+        if r.status_code != 200: return None
+        hits = r.json().get("hits", [])
+        if not hits: return None
+        valid = [h for h in hits if h.get("duration", 0) >= MIN_CLIP_DURATION] or hits
+        chosen = valid[0]
+        vids = chosen.get("videos", {})
+        for q in ("medium", "small", "large"):
+            v = vids.get(q)
+            if v and v.get("url"):
+                return {"url": v["url"], "duration": chosen["duration"],
+                        "kind": "video", "source": "pixabay"}
+        return None
+    except Exception as e:
+        print(f"[pixabay] video error: {e}", flush=True); return None
 
 
 def _search_pixabay_image(query, api_key, visual_style):
     try:
-        params = {
-            "key": api_key, "q": query, "per_page": 5,
-            "image_type": _pixabay_image_type(visual_style),
-            "orientation": "vertical", "safesearch": "true",
-        }
+        params = {"key": api_key, "q": query, "per_page": 5,
+                  "image_type": _pixabay_image_type(visual_style),
+                  "orientation": "vertical", "safesearch": "true"}
         r = httpx.get(PIXABAY_IMAGE_URL, params=params, timeout=15)
         if r.status_code != 200: return None
         hits = r.json().get("hits", [])
@@ -462,7 +446,7 @@ def _search_pixabay_image(query, api_key, visual_style):
         url = hits[0].get("largeImageURL") or hits[0].get("webformatURL")
         return {"url": url, "kind": "image", "source": "pixabay"} if url else None
     except Exception as e:
-        print(f"[stock] Pixabay image error: {e}", flush=True); return None
+        print(f"[pixabay] image error: {e}", flush=True); return None
 
 
 def _search_unsplash_image(query, api_key, visual_style):
@@ -478,28 +462,7 @@ def _search_unsplash_image(query, api_key, visual_style):
         url = urls.get("regular") or urls.get("full")
         return {"url": url, "kind": "image", "source": "unsplash"} if url else None
     except Exception as e:
-        print(f"[stock] Unsplash image error: {e}", flush=True); return None
-
-
-def fetch_stock_media(query, target_dur, pexels_key, pixabay_key, unsplash_key, visual_style="realistic"):
-    """Priority: Pexels video → Pixabay video → Pexels image → Pixabay image → Unsplash image"""
-    if pexels_key:
-        r = _search_pexels_video(query, pexels_key, target_dur, visual_style)
-        if r: return r
-    if pixabay_key:
-        r = _search_pixabay_video(query, pixabay_key, target_dur, visual_style)
-        if r: return r
-    # image fallback
-    if pexels_key:
-        r = _search_pexels_image(query, pexels_key, visual_style)
-        if r: return r
-    if pixabay_key:
-        r = _search_pixabay_image(query, pixabay_key, visual_style)
-        if r: return r
-    if unsplash_key:
-        r = _search_unsplash_image(query, unsplash_key, visual_style)
-        if r: return r
-    return None
+        print(f"[unsplash] error: {e}", flush=True); return None
 
 
 def download_media(url, out_path):
@@ -512,7 +475,7 @@ def download_media(url, out_path):
     return out_path
 
 
-# ───────────────────────── 5. AI Image (Pollinations) ───────────────────
+# ───────────────────────── 5. AI Image ──────────────────────────────────
 
 def generate_scene_image(prompt, out_path, w=720, h=1280):
     suffix = "correct human anatomy, two arms, two hands, no extra limbs, photorealistic, high quality"
@@ -529,65 +492,97 @@ def generate_scene_image(prompt, out_path, w=720, h=1280):
     return out_path
 
 
-# ───────────────────────── 6. Per-scene media (mode-aware) ──────────────
+# ───────────────────────── 6. Per-scene media ───────────────────────────
 
 def get_scene_media(job, scene, scene_idx, media_dir,
                     mode, pexels_key, pixabay_key, unsplash_key, visual_style, w, h):
-    audio_dur = scene.get("duration", 5.0)
     query = scene.get("stock_query", scene.get("ai_prompt", ""))[:80]
 
-    def try_stock():
-        result = fetch_stock_media(query, audio_dur, pexels_key, pixabay_key, unsplash_key, visual_style)
+    def try_pexels():
+        if not pexels_key: return None
+        slot   = scene.get("_slot", 0)
+        result = fetch_pexels_media(query, pexels_key, w, h, slot=slot)
         if not result: return None
-        ext = ".mp4" if result["kind"] == "video" else ".jpg"
-        out_path = os.path.join(media_dir, f"scene_{scene_idx:02d}_stock{ext}")
+        ext      = ".mp4" if result["kind"] == "video" else ".jpg"
+        out_path = os.path.join(media_dir, f"scene_{scene_idx:02d}_pexels{ext}")
         try:
             download_media(result["url"], out_path)
-            return {"type": result["kind"], "path": out_path, "source": result["source"]}
+            return {"type": result["kind"], "path": out_path,
+                    "source": "pexels", "duration": result.get("duration", 0)}
         except Exception as e:
-            job_log(job, f"⚠️  Stock download error scene {scene_idx}: {e}", "warn")
+            job_log(job, f"⚠️  Pexels download error scene {scene_idx}: {e}", "warn")
             return None
+
+    def try_pixabay():
+        if not pixabay_key: return None
+        result = _search_pixabay_video(query, pixabay_key, visual_style)
+        if not result:
+            result = _search_pixabay_image(query, pixabay_key, visual_style)
+        if not result: return None
+        ext      = ".mp4" if result["kind"] == "video" else ".jpg"
+        out_path = os.path.join(media_dir, f"scene_{scene_idx:02d}_pixabay{ext}")
+        try:
+            download_media(result["url"], out_path)
+            return {"type": result["kind"], "path": out_path,
+                    "source": "pixabay", "duration": result.get("duration", 0)}
+        except Exception as e:
+            job_log(job, f"⚠️  Pixabay download error: {e}", "warn")
+            return None
+
+    def try_unsplash():
+        if not unsplash_key: return None
+        result = _search_unsplash_image(query, unsplash_key, visual_style)
+        if not result: return None
+        out_path = os.path.join(media_dir, f"scene_{scene_idx:02d}_unsplash.jpg")
+        try:
+            download_media(result["url"], out_path)
+            return {"type": "image", "path": out_path, "source": "unsplash", "duration": 0}
+        except Exception as e:
+            job_log(job, f"⚠️  Unsplash download error: {e}", "warn")
+            return None
+
+    def try_stock():
+        r = try_pexels()
+        if r: return r
+        r = try_pixabay()
+        if r: return r
+        return try_unsplash()
 
     def try_ai():
         out_path = os.path.join(media_dir, f"scene_{scene_idx:02d}_ai.png")
         for attempt in range(3):
             try:
                 generate_scene_image(scene["ai_prompt"], out_path, w, h)
-                return {"type": "image", "path": out_path, "source": "pollinations"}
-            except Exception as e:
+                return {"type": "image", "path": out_path, "source": "pollinations", "duration": 0}
+            except Exception:
                 time.sleep(3 * (attempt + 1))
         return None
 
     if mode == "ai":
-        return try_ai() or {"type": "image", "path": None, "source": "failed"}
+        return try_ai() or {"type": "image", "path": None, "source": "failed", "duration": 0}
 
     if mode == "stock":
         r = try_stock()
         if r: return r
         job_log(job, f"⚠️  Stock miss scene {scene_idx}, AI fallback...", "warn")
-        return try_ai() or {"type": "image", "path": None, "source": "failed"}
+        return try_ai() or {"type": "image", "path": None, "source": "failed", "duration": 0}
 
     if mode == "hybrid":
         stock_result = [None]; ai_result = [None]
-        def _stock(): stock_result[0] = try_stock()
-        def _ai(): ai_result[0] = try_ai()
-        t1 = threading.Thread(target=_stock)
-        t2 = threading.Thread(target=_ai)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
-        # stock video > stock image > ai image
-        if stock_result[0] and stock_result[0]["type"] == "video":
-            return stock_result[0]
-        if stock_result[0]:
-            return stock_result[0]
-        if ai_result[0]:
-            return ai_result[0]
-        return {"type": "image", "path": None, "source": "failed"}
+        def _s(): stock_result[0] = try_stock()
+        def _a(): ai_result[0] = try_ai()
+        t1 = threading.Thread(target=_s)
+        t2 = threading.Thread(target=_a)
+        t1.start(); t2.start(); t1.join(); t2.join()
+        if stock_result[0] and stock_result[0]["type"] == "video": return stock_result[0]
+        if stock_result[0]: return stock_result[0]
+        if ai_result[0]: return ai_result[0]
+        return {"type": "image", "path": None, "source": "failed", "duration": 0}
 
-    return {"type": "image", "path": None, "source": "unknown_mode"}
+    return {"type": "image", "path": None, "source": "unknown_mode", "duration": 0}
 
 
-# ───────────────────────── 7. Scene Clip Builder ────────────────────────
+# ───────────────────────── 7. Clip Builder ──────────────────────────────
 
 def _scale_filter(w, h):
     return (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
@@ -595,7 +590,7 @@ def _scale_filter(w, h):
 
 
 def _build_image_clip(image_path, audio_path, duration_sec, out_path, zoom_in, w, h):
-    """Image → Ken Burns clip, audio duration master"""
+    """Image → Ken Burns. PATCH: -shortest -t dur শেষে, input limiter নেই।"""
     scale_w = int(w * 1.1); scale_h = int(h * 1.1)
     if zoom_in:
         vf = f"scale={scale_w}:{scale_h},crop={w}:{h}:0:0,setsar=1"
@@ -603,10 +598,14 @@ def _build_image_clip(image_path, audio_path, duration_sec, out_path, zoom_in, w
         ox = (scale_w-w)//2; oy = (scale_h-h)//2
         vf = f"scale={scale_w}:{scale_h},crop={w}:{h}:{ox}:{oy},setsar=1"
     cmd = [
-        "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
-        "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "ffmpeg", "-y", "-loop", "1", "-i", image_path,
+        "-i", audio_path,
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-pix_fmt", "yuv420p", "-threads", "1",
-        "-c:a", "aac", "-b:a", "96k", "-t", str(duration_sec), "-shortest", out_path,
+        "-c:a", "aac", "-b:a", "96k",
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-shortest", "-t", str(duration_sec), out_path,
     ]
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode != 0:
@@ -615,32 +614,67 @@ def _build_image_clip(image_path, audio_path, duration_sec, out_path, zoom_in, w
 
 
 def _build_video_clip(video_path, audio_path, audio_dur, out_path, w, h):
-    """Stock video → audio duration-এ fit (trim বা tpad freeze)"""
+    """Stock video → audio duration-এ fit। short video → stream_loop।"""
     video_dur = _ffprobe_duration(video_path)
     if video_dur <= 0:
         raise RuntimeError(f"video duration পড়তে পারেনি: {video_path}")
+
     sf = _scale_filter(w, h)
+
     if video_dur >= audio_dur:
-        vf = sf
-        cmd = ["ffmpeg", "-y", "-i", video_path, "-i", audio_path,
-               "-t", str(audio_dur), "-vf", vf,
+        start_t = _find_best_segment(video_path, video_dur, audio_dur)
+        cmd = ["ffmpeg", "-y",
+               "-ss", str(start_t), "-i", video_path, "-i", audio_path,
+               "-t", str(audio_dur), "-vf", sf,
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                "-pix_fmt", "yuv420p", "-threads", "1",
                "-map", "0:v:0", "-map", "1:a:0",
                "-c:a", "aac", "-b:a", "96k", out_path]
     else:
-        pad_dur = audio_dur - video_dur
-        vf = f"{sf},tpad=stop_mode=clone:stop_duration={pad_dur:.3f}"
-        cmd = ["ffmpeg", "-y", "-i", video_path, "-i", audio_path,
-               "-t", str(audio_dur), "-vf", vf,
+        loop_count = int(audio_dur / video_dur) + 2
+        cmd = ["ffmpeg", "-y",
+               "-stream_loop", str(loop_count), "-i", video_path, "-i", audio_path,
+               "-t", str(audio_dur), "-vf", sf,
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                "-pix_fmt", "yuv420p", "-threads", "1",
                "-map", "0:v:0", "-map", "1:a:0",
                "-c:a", "aac", "-b:a", "96k", out_path]
+
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode != 0:
-        raise RuntimeError(f"video clip failed: {r.stderr[-300:]}")
+        raise RuntimeError(f"video clip failed: {r.stderr[-400:]}")
     return out_path
+
+
+def _find_best_segment(video_path, video_dur, need_dur):
+    """PATCH: dead code সরানো হয়েছে। scene change density দিয়ে best window।"""
+    if video_dur <= need_dur:
+        return 0.0
+    try:
+        scene_cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", "select='gt(scene,0.1)',showinfo",
+            "-vsync", "vfr", "-f", "null", "-",
+        ]
+        result = subprocess.run(scene_cmd, capture_output=True, text=True, timeout=20)
+        timestamps = []
+        for line in result.stderr.splitlines():
+            m = re.search(r"pts_time:([\d.]+)", line)
+            if m: timestamps.append(float(m.group(1)))
+
+        if not timestamps:
+            return max(0.0, (video_dur - need_dur) / 2)
+
+        best_start = 0.0; best_count = 0; step = 0.5; t = 0.0
+        while t + need_dur <= video_dur:
+            count = sum(1 for ts in timestamps if t <= ts <= t + need_dur)
+            if count > best_count:
+                best_count = count; best_start = t
+            t += step
+        return best_start
+    except Exception as e:
+        print(f"[best_segment] fallback to middle: {e}", flush=True)
+        return max(0.0, (video_dur - need_dur) / 2)
 
 
 def _make_black_frame(out_path, w, h):
@@ -652,21 +686,12 @@ def _make_black_frame(out_path, w, h):
 
 
 # ───────────────────────── 8. Concat with transitions ───────────────────
-# KEY INSIGHT (reference project):
-# xfade offset = scene_duration - transition_duration
-# transition_dur = 0 হলে direct concat demuxer
 
 def concat_with_transitions(clip_paths, scene_durations, transition_style, out_path):
-    """
-    transition_style: "fade" | "slide" | "none"
-    scene_durations: প্রতিটা clip-এর duration (xfade offset calculate করতে)
-    """
     if len(clip_paths) == 1:
-        shutil.copy(clip_paths[0], out_path)
-        return out_path
+        shutil.copy(clip_paths[0], out_path); return out_path
 
     if transition_style == "none":
-        # simple concat demuxer
         list_path = out_path + "_list.txt"
         with open(list_path, "w") as f:
             for p in clip_paths: f.write(f"file '{p}'\n")
@@ -680,18 +705,11 @@ def concat_with_transitions(clip_paths, scene_durations, transition_style, out_p
             if os.path.exists(list_path): os.remove(list_path)
         return out_path
 
-    # fade / slide → xfade filter
-    # reference project approach: offset = cumulative_duration - TRANSITION_DUR * i
     td = TRANSITION_DUR
     xfade_name = "fade" if transition_style == "fade" else "slideleft"
-
     inputs = []
-    for p in clip_paths:
-        inputs += ["-i", p]
+    for p in clip_paths: inputs += ["-i", p]
 
-    # filter_complex build
-    # [0:v][1:v]xfade=...:offset=O1[vt1]; [vt1][2:v]xfade=...:offset=O2[vt2]; ...
-    # audio: [0:a][1:a][2:a]concat=n=N:v=0:a=1[outa]
     filter_parts = []
     cumulative = 0.0
     last_v = "0:v"
@@ -700,19 +718,16 @@ def concat_with_transitions(clip_paths, scene_durations, transition_style, out_p
     for i in range(1, len(clip_paths)):
         cumulative += scene_durations[i-1]
         offset = max(0.0, cumulative - td * i)
-        cur_v  = f"{i}:v"
         out_v  = f"vt{i}"
         filter_parts.append(
-            f"[{last_v}][{cur_v}]xfade=transition={xfade_name}:duration={td}:offset={offset:.3f}[{out_v}]"
+            f"[{last_v}][{i}:v]xfade=transition={xfade_name}:duration={td}:offset={offset:.3f}[{out_v}]"
         )
         last_v = out_v
         last_a_inputs += f"[{i}:a]"
 
-    # audio concat
-    n = len(clip_paths)
-    filter_parts.append(f"{last_a_inputs}concat=n={n}:v=0:a=1[outa]")
-
+    filter_parts.append(f"{last_a_inputs}concat=n={len(clip_paths)}:v=0:a=1[outa]")
     filter_complex = ";".join(filter_parts)
+
     cmd = (["ffmpeg", "-y"] + inputs +
            ["-filter_complex", filter_complex,
             "-map", f"[{last_v}]", "-map", "[outa]",
@@ -721,41 +736,31 @@ def concat_with_transitions(clip_paths, scene_durations, transition_style, out_p
             "-c:a", "aac", "-b:a", "96k", out_path])
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode != 0:
-        # xfade fail হলে none fallback
-        print(f"[scenevideo] xfade failed, falling back to concat: {r.stderr[-200:]}", flush=True)
+        print(f"[scenevideo] xfade failed, fallback concat: {r.stderr[-200:]}", flush=True)
         return concat_with_transitions(clip_paths, scene_durations, "none", out_path)
     return out_path
 
 
-# ───────────────────────── 9. Background Music mix ──────────────────────
+# ───────────────────────── 9. Background Music ──────────────────────────
 
 def mix_background_music(video_path, music_name, music_volume, out_path, job_dir):
-    """
-    Background music track overlay করো।
-    music_name: "epic" | "upbeat" | "relaxing"
-    music_volume: 0.0 - 1.0
-    Reference project: amix=inputs=2:duration=first:dropout_transition=3:weights=1 {volume}
-    """
     music_url = MUSIC_TRACKS.get(music_name)
     if not music_url:
-        shutil.copy(video_path, out_path)
-        return out_path
+        shutil.copy(video_path, out_path); return out_path
 
     music_path = os.path.join(job_dir, f"music_{music_name}.mp3")
     try:
         download_media(music_url, music_path)
     except Exception as e:
         print(f"[scenevideo] music download failed: {e}", flush=True)
-        shutil.copy(video_path, out_path)
-        return out_path
+        shutil.copy(video_path, out_path); return out_path
 
     cmd = [
         "ffmpeg", "-y", "-i", video_path, "-i", music_path,
         "-filter_complex",
         f"[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=3:weights=1 {music_volume:.2f}[outa]",
         "-map", "0:v", "-map", "[outa]",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-        out_path,
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", out_path,
     ]
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode != 0:
@@ -787,18 +792,16 @@ def _run_scenevideo_job(job_id):
         job["status"] = "running"; job["stage"] = "script"
         job_log(job, f"🚀 Job শুরু — mode:{mode}, style:{visual_style}, res:{w}x{h}, transition:{transition}")
 
-        # 1) Script + scene breakdown (visual_style-aware query generation)
+        # 1) Script
         job_log(job, "📝 Script ও scene breakdown বানানো হচ্ছে...")
-        result = generate_script_and_scenes(
-            job["event_description"], job["text_api_key"], visual_style
-        )
+        result = generate_script_and_scenes(job["event_description"], job["text_api_key"], visual_style)
         scenes = result["scenes"]
         job["title"] = result.get("title", "")
         job["scenes"] = scenes
         job["scene_count"] = len(scenes)
         job_log(job, f"✅ {len(scenes)}টা scene: {job['title']}")
 
-        # 2) TTS (Gemini primary, StreamElements fallback)
+        # 2) TTS
         job["stage"] = "tts"
         raw_wav = synthesize_audio(job, scenes, job_dir)
 
@@ -813,81 +816,121 @@ def _run_scenevideo_job(job_id):
         job_log(job, "✅ Audio split শেষ")
         save_job(job)
 
-        # 4) Media fetch (mode + visual_style aware)
+        # 4) Media fetch — প্রতি ৪ সেকেন্ডে নতুন visual slot
         job["stage"] = "images"
-        mode_label = {"ai": "AI", "stock": "Stock", "hybrid": "Hybrid"}
-        job_log(job, f"🎨 Media fetch — {mode_label.get(mode,mode)}, style:{visual_style}")
+        job_log(job, f"🎨 Media fetch — {mode}, style:{visual_style}")
         media_dir = os.path.join(job_dir, "scene_media")
         os.makedirs(media_dir, exist_ok=True)
 
         for idx, scene in enumerate(scenes):
             if job.get("stop_requested"): raise RuntimeError("ইউজার স্টপ করেছে")
-            job_log(job, f"   Scene {idx+1}/{len(scenes)} — query: \"{scene.get('stock_query','')}\"")
-            media = get_scene_media(
-                job, scene, idx, media_dir, mode,
-                pexels_key, pixabay_key, unsplash_key, visual_style, w, h
-            )
-            scene["media_type"]   = media["type"]
-            scene["media_path"]   = media["path"]
-            scene["media_source"] = media["source"]
-            job["image_done"] = idx + 1
-            job_log(job, f"   ✅ {media['type']} from {media['source']}")
+            audio_dur = scene.get("duration", 5.0)
+            n_slots   = max(1, int(math.ceil(audio_dur / CLIP_INTERVAL)))
+            job_log(job, f"   Scene {idx+1}/{len(scenes)} ({audio_dur:.1f}s) — {n_slots} slot")
+
+            slot_medias = []
+            for slot in range(n_slots):
+                media = get_scene_media(
+                    job, {**scene, "_slot": slot},
+                    idx * 100 + slot, media_dir, mode,
+                    pexels_key, pixabay_key, unsplash_key, visual_style, w, h
+                )
+                slot_medias.append(media)
+                job_log(job, f"     slot {slot+1}: {media['type']} from {media.get('source','?')}")
+
+            scene["slot_medias"] = slot_medias
+            scene["n_slots"]     = n_slots
+            job["image_done"]    = idx + 1
             save_job(job)
 
-        # 5) Build per-scene clips
+        # 5) Build clips — per slot
         job["stage"] = "video"
         job_log(job, "🎬 Scene clip বানানো হচ্ছে...")
         clip_dir = os.path.join(job_dir, "scene_clips")
         os.makedirs(clip_dir, exist_ok=True)
-        clip_paths = []
-        clip_durations = []
+        clip_paths = []; clip_durations = []
 
         for i, scene in enumerate(scenes):
             if job.get("stop_requested"): raise RuntimeError("ইউজার স্টপ করেছে")
-            clip_path  = os.path.join(clip_dir, f"clip_{i:02d}.mp4")
-            audio_path = scene["audio_path"]
-            audio_dur  = scene["duration"]
-            media_type = scene.get("media_type", "image")
-            media_path = scene.get("media_path")
+            audio_path  = scene["audio_path"]
+            audio_dur   = scene["duration"]
+            slot_medias = scene.get("slot_medias", [])
+            n_slots     = scene.get("n_slots", 1)
+            slot_dur    = audio_dur / n_slots
 
-            try:
-                if media_type == "video" and media_path and os.path.exists(media_path):
-                    job_log(job, f"   🎬 Clip {i+1}: stock video ({audio_dur:.1f}s)")
-                    _build_video_clip(media_path, audio_path, audio_dur, clip_path, w, h)
-                else:
-                    if not media_path or not os.path.exists(media_path or ""):
-                        job_log(job, f"   ⚠️  Clip {i+1}: media নেই, black frame", "warn")
-                        media_path = os.path.join(media_dir, f"scene_{i:02d}_black.png")
-                        _make_black_frame(media_path, w, h)
-                    job_log(job, f"   🖼️  Clip {i+1}: image Ken Burns ({audio_dur:.1f}s)")
-                    _build_image_clip(media_path, audio_path, audio_dur, clip_path, i%2==0, w, h)
+            slot_clips = []
+            for s, media in enumerate(slot_medias):
+                slot_start    = s * slot_dur
+                actual_dur    = min(slot_dur, audio_dur - slot_start)
+                slot_clip_path  = os.path.join(clip_dir, f"clip_{i:02d}_slot_{s:02d}.mp4")
+                slot_audio_path = os.path.join(clip_dir, f"audio_{i:02d}_slot_{s:02d}.aac")
 
-                clip_paths.append(clip_path)
-                clip_durations.append(audio_dur)
-                job_log(job, f"   ✅ Clip {i+1}/{len(scenes)} তৈরি")
-            except Exception as e:
-                job_log(job, f"   ❌ Clip {i+1} ব্যর্থ: {e}", "error")
+                subprocess.run([
+                    "ffmpeg", "-y", "-i", audio_path,
+                    "-ss", str(slot_start), "-t", str(actual_dur),
+                    "-c:a", "aac", "-b:a", "96k", slot_audio_path,
+                ], capture_output=True)
+
+                media_type = media.get("type", "image")
+                media_path = media.get("path")
+
+                try:
+                    if media_type == "video" and media_path and os.path.exists(media_path):
+                        job_log(job, f"   🎬 Clip {i+1} slot {s+1}: video ({actual_dur:.1f}s)")
+                        _build_video_clip(media_path, slot_audio_path, actual_dur, slot_clip_path, w, h)
+                    else:
+                        if not media_path or not os.path.exists(media_path or ""):
+                            job_log(job, f"   ⚠️  Clip {i+1} slot {s+1}: media নেই, black frame", "warn")
+                            media_path = os.path.join(media_dir, f"black_{i}_{s}.png")
+                            _make_black_frame(media_path, w, h)
+                        job_log(job, f"   🖼️  Clip {i+1} slot {s+1}: image ({actual_dur:.1f}s)")
+                        _build_image_clip(media_path, slot_audio_path, actual_dur,
+                                          slot_clip_path, s % 2 == 0, w, h)
+                    slot_clips.append((slot_clip_path, actual_dur))
+                except Exception as e:
+                    job_log(job, f"   ❌ Clip {i+1} slot {s+1} ব্যর্থ: {e}", "error")
+
+            if not slot_clips: continue
+
+            scene_clip_path = os.path.join(clip_dir, f"clip_{i:02d}.mp4")
+            if len(slot_clips) == 1:
+                shutil.copy(slot_clips[0][0], scene_clip_path)
+            else:
+                slot_list = scene_clip_path + "_slots.txt"
+                with open(slot_list, "w") as f:
+                    for sp, _ in slot_clips: f.write(f"file '{sp}'\n")
+                subprocess.run([
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", slot_list,
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                    "-pix_fmt", "yuv420p", "-threads", "1",
+                    "-c:a", "aac", "-b:a", "96k", scene_clip_path,
+                ], capture_output=True, check=True)
+                os.remove(slot_list)
+
+            clip_paths.append(scene_clip_path)
+            clip_durations.append(audio_dur)
+            job_log(job, f"   ✅ Scene {i+1}/{len(scenes)} তৈরি ({n_slots} slot)")
 
         if not clip_paths:
             raise RuntimeError("কোনো clip তৈরি হয়নি")
 
-        # 6) Concat with transitions (xfade offset = duration - transition_dur)
+        # 6) Concat with transitions
         job["stage"] = "compose"
         job_log(job, f"🔗 Concat — transition: {transition}")
         composed_path = os.path.join(job_dir, "composed_video.mp4")
         concat_with_transitions(clip_paths, clip_durations, transition, composed_path)
 
-        # 7) Background music mix
+        # 7) Background music
         final_path = os.path.join(job_dir, "final_video.mp4")
         if music_name != "none":
-            job_log(job, f"🎵 Background music mix — {music_name} (vol:{music_vol})")
+            job_log(job, f"🎵 Background music — {music_name} (vol:{music_vol})")
             mix_background_music(composed_path, music_name, music_vol, final_path, job_dir)
         else:
             shutil.copy(composed_path, final_path)
 
         job["status"] = "complete"; job["stage"] = "done"
         job["final_video"] = final_path
-        job_log(job, "🎉 সম্পন্ন! Final video তৈরি।")
+        job_log(job, "🎉 সম্পন্ন!")
 
     except Exception as e:
         job["status"] = "error"
@@ -903,7 +946,6 @@ def register_scenevideo_routes(app):
     @app.route("/scenevideo/start", methods=["POST"])
     def scenevideo_start():
         data = request.get_json(force=True)
-
         event_description = (data.get("event_description") or "").strip()
         text_api_key      = (data.get("text_api_key") or "").strip()
         tts_api_key       = (data.get("tts_api_key") or "").strip()
@@ -926,7 +968,7 @@ def register_scenevideo_routes(app):
         if media_mode in ("stock", "hybrid") and not any([pexels_key, pixabay_key, unsplash_key]):
             return jsonify({"error": "Stock mode-এ কমপক্ষে একটা stock API key দাও"}), 400
         if resolution not in RESOLUTIONS:
-            return jsonify({"error": f"resolution must be one of: {list(RESOLUTIONS.keys())}"}), 400
+            resolution = "720x1280"
 
         job_id = uuid.uuid4().hex[:12]
         job = {
