@@ -388,10 +388,41 @@ button#submitBtn:disabled{background:#333;color:#666;cursor:not-allowed}
       <label>Script/Text API Key <span style="font-size:.78rem;color:#e63946">(scene breakdown বানানোর জন্য)</span></label>
       <input type="text" id="svTextKey" placeholder="AIzaSy..." style="font-family:monospace">
 
-      <label style="margin-top:10px">TTS API Key <span style="font-size:.78rem;color:#777">(একটাই — voice generation এর জন্য)</span></label>
+      <label style="margin-top:10px">TTS API Key</label>
       <input type="text" id="svTtsKey" placeholder="AIzaSy..." style="font-family:monospace">
 
-      <div style="margin-top:10px;padding:8px 12px;background:#1a2a1a;border-radius:6px;font-size:.82rem;color:#4caf50">🖼️ ছবি: Pollinations.ai (ফ্রি, key লাগবে না)</div>
+      <!-- Media Mode -->
+      <label style="margin-top:14px;font-weight:600">🎬 Media Mode</label>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:#1a1a1a;padding:8px 14px;border-radius:8px;border:1px solid #333">
+          <input type="radio" name="svMediaMode" value="ai" id="svModeAi" onchange="svOnModeChange()">
+          <span>🤖 AI Only</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:#1a1a1a;padding:8px 14px;border-radius:8px;border:1px solid #333">
+          <input type="radio" name="svMediaMode" value="stock" id="svModeStock" onchange="svOnModeChange()">
+          <span>📷 Stock Only</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:#1a2a1a;padding:8px 14px;border-radius:8px;border:2px solid #4caf50">
+          <input type="radio" name="svMediaMode" value="hybrid" id="svModeHybrid" onchange="svOnModeChange()" checked>
+          <span>⚡ Hybrid</span>
+        </label>
+      </div>
+      <div style="font-size:.76rem;color:#666;margin-top:4px" id="svModeDesc">Stock footage + AI fallback — সবচেয়ে ভালো quality</div>
+
+      <!-- Stock API Keys (hidden when AI only) -->
+      <div id="svStockKeys" style="margin-top:12px;padding:12px;background:#0d1a0d;border-radius:8px;border:1px solid #1f3a1f">
+        <div style="font-size:.8rem;color:#4caf50;margin-bottom:8px">📡 Stock API Keys (যেটা আছে সেটাই দাও, সবগুলো লাগবে না)</div>
+        <label style="font-size:.82rem">Pexels API Key <span style="color:#666;font-size:.75rem">(video + image)</span></label>
+        <input type="text" id="svPexelsKey" placeholder="xxxxxx..." style="font-family:monospace;font-size:.82rem">
+        <label style="font-size:.82rem;margin-top:6px">Pixabay API Key <span style="color:#666;font-size:.75rem">(video + image)</span></label>
+        <input type="text" id="svPixabayKey" placeholder="xxxxxx..." style="font-family:monospace;font-size:.82rem">
+        <label style="font-size:.82rem;margin-top:6px">Unsplash Access Key <span style="color:#666;font-size:.75rem">(image only)</span></label>
+        <input type="text" id="svUnsplashKey" placeholder="xxxxxx..." style="font-family:monospace;font-size:.82rem">
+      </div>
+
+      <div style="margin-top:8px;padding:6px 10px;background:#111;border-radius:6px;font-size:.78rem;color:#666">
+        Priority: Pexels video → Pixabay video → Pexels image → Unsplash image → AI fallback
+      </div>
 
       <div class="row" style="margin-top:10px">
         <div>
@@ -1362,16 +1393,20 @@ async function amStop(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SCENE VIDEO JS
+// SCENE VIDEO JS (UPDATED)
 // ═══════════════════════════════════════════════════════════════
 
 const SV_JOB_KEY = 'sv_job_id';
 let _svJobId = null;
 
 function svSaveSettings(){
-  localStorage.setItem('sv_text_key',  document.getElementById('svTextKey').value.trim());
-  localStorage.setItem('sv_tts_key',   document.getElementById('svTtsKey').value.trim());
-  localStorage.setItem('sv_voice',     document.getElementById('svVoice').value);
+  localStorage.setItem('sv_text_key',   document.getElementById('svTextKey').value.trim());
+  localStorage.setItem('sv_tts_key',    document.getElementById('svTtsKey').value.trim());
+  localStorage.setItem('sv_voice',      document.getElementById('svVoice').value);
+  localStorage.setItem('sv_media_mode', document.querySelector('input[name="svMediaMode"]:checked')?.value || 'hybrid');
+  localStorage.setItem('sv_pexels_key',   document.getElementById('svPexelsKey').value.trim());
+  localStorage.setItem('sv_pixabay_key',  document.getElementById('svPixabayKey').value.trim());
+  localStorage.setItem('sv_unsplash_key', document.getElementById('svUnsplashKey').value.trim());
   const m = document.getElementById('svSaveMsg');
   m.textContent='✅ Saved!'; setTimeout(()=>m.textContent='',2000);
 }
@@ -1382,13 +1417,33 @@ function svLoadSettings(){
     const el = document.getElementById(id);
     if (v && el) el.value = v;
   };
-  get('svTextKey',   'sv_text_key');
-  get('svTtsKey',    'sv_tts_key');
-  get('svVoice',     'sv_voice');
-
-  // আগের চলমান job থাকলে recover করো
+  get('svTextKey',    'sv_text_key');
+  get('svTtsKey',     'sv_tts_key');
+  get('svVoice',      'sv_voice');
+  get('svPexelsKey',  'sv_pexels_key');
+  get('svPixabayKey', 'sv_pixabay_key');
+  get('svUnsplashKey','sv_unsplash_key');
+  // media mode radio
+  const savedMode = localStorage.getItem('sv_media_mode') || 'hybrid';
+  const modeRadio = document.querySelector(`input[name="svMediaMode"][value="${savedMode}"]`);
+  if(modeRadio) modeRadio.checked = true;
+  svOnModeChange();
+  // আগের চলমান job recover
   const savedId = localStorage.getItem(SV_JOB_KEY);
   if(savedId) _svTryRecover(savedId);
+}
+
+function svOnModeChange(){
+  const mode = document.querySelector('input[name="svMediaMode"]:checked')?.value || 'hybrid';
+  const stockDiv = document.getElementById('svStockKeys');
+  const descDiv  = document.getElementById('svModeDesc');
+  const descs = {
+    ai:     '🤖 Pollinations.ai দিয়ে AI image বানাবে (key লাগবে না)',
+    stock:  '📷 Pexels/Pixabay/Unsplash stock footage খুঁজবে, না পেলে AI fallback',
+    hybrid: '⚡ Stock + AI parallel — stock video পেলে সেটাই নেবে, না পেলে AI image',
+  };
+  descDiv.textContent = descs[mode] || '';
+  stockDiv.style.display = mode === 'ai' ? 'none' : 'block';
 }
 
 async function _svTryRecover(jobId){
@@ -1418,9 +1473,19 @@ async function svStart(){
   const ttsKey    = document.getElementById('svTtsKey').value.trim();
   const voice     = document.getElementById('svVoice').value;
   const eventDesc = document.getElementById('svEventDesc').value.trim();
+  const mediaMode  = document.querySelector('input[name="svMediaMode"]:checked')?.value || 'hybrid';
+  const pexelsKey  = document.getElementById('svPexelsKey').value.trim();
+  const pixabayKey = document.getElementById('svPixabayKey').value.trim();
+  const unsplashKey= document.getElementById('svUnsplashKey').value.trim();
 
   if(!textKey || !ttsKey) { alert('Text API key এবং TTS API key দুটোই দাও'); return; }
   if(!eventDesc)           { alert('ঘটনার বিবরণ লেখো'); return; }
+  if(['stock','hybrid'].includes(mediaMode) && !pexelsKey && !pixabayKey && !unsplashKey){
+    alert('Stock mode-এ কমপক্ষে একটা stock API key দাও (Pexels / Pixabay / Unsplash)');
+    document.getElementById('svStartBtn').disabled=false;
+    document.getElementById('svStopBtn').style.display='none';
+    return;
+  }
 
   document.getElementById('svStartBtn').disabled=true;
   document.getElementById('svStopBtn').style.display='block';
@@ -1437,7 +1502,11 @@ async function svStart(){
         event_description: eventDesc,
         text_api_key: textKey,
         tts_api_key: ttsKey,
-        voice: voice
+        voice: voice,
+        media_mode: mediaMode,
+        pexels_key: pexelsKey,
+        pixabay_key: pixabayKey,
+        unsplash_key: unsplashKey,
       })
     });
     if(!r.ok){
@@ -1459,7 +1528,7 @@ const SV_STAGES = [
   {key:'script',  label:'📝 Script'},
   {key:'tts',     label:'🎙 TTS'},
   {key:'split',   label:'✂️ Split'},
-  {key:'images',  label:'🖼 Images'},
+  {key:'images',  label:'🎨 Media'},
   {key:'video',   label:'🎬 Clips'},
   {key:'compose', label:'🔗 Compose'},
 ];
@@ -1512,7 +1581,10 @@ function _svAttachSSE(jobId){
       _svRenderStages(d.stage);
       let txt = `Stage: ${d.stage}`;
       if(d.scene_count) txt += ` — ${d.scene_count} scenes`;
-      if(d.stage==='images' && d.scene_count) txt += ` (${d.image_done}/${d.scene_count} ছবি হয়ে গেছে)`;
+      if(d.stage==='images' && d.scene_count){
+        const modeLabel = {ai:'AI image', stock:'stock media', hybrid:'media'}[d.media_mode] || 'media';
+        txt += ` (${d.image_done}/${d.scene_count} ${modeLabel} হয়ে গেছে)`;
+      }
       if(d.title) txt += ` — "${d.title}"`;
       progress.textContent = txt;
     }catch(_){}
