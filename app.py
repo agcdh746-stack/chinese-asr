@@ -407,6 +407,93 @@ async def synthesize_segment(*, text, voice, language="Bengali",
                     break
 
 
+# ─── BGM Separation (Hugging Face Audio-Separator Space) ───────────
+HF_BGM_SPACE = os.environ.get("HF_BGM_SPACE", "MohamedRashad/Audio-Separator")
+HF_TOKEN     = os.environ.get("HF_TOKEN", "").strip()
+
+def separate_bgm(video_path: str, job_dir: str, log_fn=None):
+    """
+    Original video থেকে instrumental/BGM stem আলাদা করে আনে
+    Hugging Face Audio-Separator Space (Gradio) ব্যবহার করে।
+    সফল হলে BGM wav path রিটার্ন করে, ফেইল হলে None।
+    """
+    def _log(msg):
+        if log_fn:
+            try: log_fn(msg)
+            except Exception: pass
+        print(f"[bgm] {msg}", flush=True)
+
+    try:
+        from gradio_client import Client, handle_file
+    except ImportError:
+        _log("❌ gradio_client ইনস্টল করা নেই")
+        return None
+
+    try:
+        # ১) ভিডিও থেকে stereo audio extract করো (HF model স্টেরিও আশা করে)
+        src_audio = os.path.join(job_dir, "bgm_src.wav")
+        subprocess.run([
+            "ffmpeg", "-y", "-i", video_path,
+            "-ar", "44100", "-ac", "2", "-vn", src_audio
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        _log("⏳ HF Space এ পাঠানো হচ্ছে (BGM separation)...")
+        client_kwargs = {}
+        if HF_TOKEN:
+            client_kwargs["hf_token"] = HF_TOKEN
+        client = Client(HF_BGM_SPACE, **client_kwargs)
+
+        result = client.predict(
+            audio_path=handle_file(src_audio),
+            separation_mode=["Instrument"],
+            separation_model="UVR-MDX-NET-Inst_HQ_3",
+            youtube_url="",
+            api_name="/predict"
+        )
+
+        # result সাধারণত tuple/list: (instrument_path, vocal_path)
+        instrument_path = None
+        if isinstance(result, (list, tuple)):
+            instrument_path = result[0] if len(result) > 0 else None
+        elif isinstance(result, str):
+            instrument_path = result
+
+        if not instrument_path or not os.path.exists(instrument_path):
+            _log("❌ HF Space থেকে instrument file পাওয়া যায়নি")
+            return None
+
+        bgm_wav = os.path.join(job_dir, "bgm_instrument.wav")
+        subprocess.run([
+            "ffmpeg", "-y", "-i", instrument_path,
+            "-ar", "24000", "-ac", "1", bgm_wav
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        _log("✅ BGM separation সফল")
+        return bgm_wav
+
+    except Exception as e:
+        _log(f"❌ BGM separation ব্যর্থ: {str(e)[:150]}")
+        return None
+
+
+def merge_voice_with_bgm(mixed_voice_wav: str, bgm_wav: str, job_dir: str) -> str:
+    """নতুন dub voice + আলাদা করা BGM মিক্স করে একটা ফাইনাল wav বানায়।"""
+    final_audio = os.path.join(job_dir, "final_with_bgm.wav")
+    fc = (
+        f"[0:a]volume=1.0[voice];"
+        f"[1:a]volume=1.0[bgm];"
+        f"[voice][bgm]amix=inputs=2:duration=first:normalize=0[aout]"
+    )
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-i", mixed_voice_wav,
+        "-i", bgm_wav,
+        "-filter_complex", fc,
+        "-map", "[aout]", final_audio
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return final_audio
+
+
 # ─── Background Audio Ducking ─────────────────────────────────────
 def _probe_mean_volume_db(path):
     try:
@@ -1487,14 +1574,20 @@ def dub():
                            check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         else:
             mixed_audio=base_audio
-        if use_ducking:
-            apply_ducking(video_path, mixed_audio, out_path)
+        # ── BGM আলাদা করে নতুন voice এর সাথে মিক্স করো ──
+        bgm_wav = separate_bgm(video_path, job_dir)
+        if bgm_wav:
+            final_audio = merge_voice_with_bgm(mixed_audio, bgm_wav, job_dir)
         else:
-            subprocess.run(["ffmpeg","-y","-i",video_path,"-i",mixed_audio,
-                            "-c:v","copy","-c:a","aac","-b:a","128k",
-                            "-map","0:v:0","-map","1:a:0","-shortest",
-                            "-movflags","+faststart",out_path],
-                           check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            # BGM separation ফেইল করলে ducking fallback (silent না হয়ে অন্তত original লেভেলে থাকুক)
+            apply_ducking(video_path, mixed_audio, out_path)
+            return jsonify({"video_url":f"/dub_video/{job_id}/dubbed.mp4","job_id":job_id})
+
+        subprocess.run(["ffmpeg","-y","-i",video_path,"-i",final_audio,
+                        "-c:v","copy","-c:a","aac","-b:a","128k",
+                        "-map","0:v:0","-map","1:a:0","-shortest",
+                        "-movflags","+faststart",out_path],
+                       check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         return jsonify({"video_url":f"/dub_video/{job_id}/dubbed.mp4","job_id":job_id})
     except Exception as e:
         return jsonify({"error":str(e)}),500
