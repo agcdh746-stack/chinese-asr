@@ -448,7 +448,7 @@ def separate_bgm(video_path: str, job_dir: str, log_fn=None):
             separation_mode=["Instrument"],
             separation_model="UVR-MDX-NET-Inst_HQ_3",
             youtube_url="",
-            api_name="/predict"
+            api_name="/Audio_Separator_audio_sep"
         )
 
         # result সাধারণত tuple/list: (instrument_path, vocal_path)
@@ -1579,9 +1579,9 @@ def dub():
         if bgm_wav:
             final_audio = merge_voice_with_bgm(mixed_audio, bgm_wav, job_dir)
         else:
-            # BGM separation ফেইল করলে ducking fallback (silent না হয়ে অন্তত original লেভেলে থাকুক)
-            apply_ducking(video_path, mixed_audio, out_path)
-            return jsonify({"video_url":f"/dub_video/{job_id}/dubbed.mp4","job_id":job_id})
+            # BGM separation ফেইল করলে শুধু নতুন voice বসাও (original audio সম্পূর্ণ বাদ)
+            # ⚠️ ducking ব্যবহার করা হয় না কারণ তাতে original কথা + নতুন voice দুটোই শোনা যায়
+            final_audio = mixed_audio
 
         subprocess.run(["ffmpeg","-y","-i",video_path,"-i",final_audio,
                         "-c:v","copy","-c:a","aac","-b:a","128k",
