@@ -111,10 +111,21 @@ JSON ফরম্যাট (শুধু JSON, অন্য কিছু না)
 """
 
 def generate_script_and_scenes(event_description, api_key, visual_style="realistic"):
+    # উভয় mode-এই stock_query rules same — শুধু English, কোনো বাংলা নয়
     style_note = (
-        "realistic → stock_query must be literal descriptive (e.g. 'fire truck emergency')"
-        if visual_style == "realistic"
-        else "cartoon → stock_query must include 'illustration' or 'animation' (e.g. 'fire truck illustration')"
+        "stock_query STRICT RULES (both modes):\n"
+        "  - ENGLISH ONLY. Bengali script (অ আ ক খ etc) সম্পূর্ণ নিষিদ্ধ।\n"
+        "  - 2-4 simple English words. Generic visual concept।\n"
+        "  - NO proper nouns, NO country names, NO city names, NO brand names।\n"
+        "  - Think: what would a stock videographer film? Use that concept।\n"
+        "  - REALISTIC examples: 'river fishing boat', 'busy street crowd', 'doctor patient hospital', 'fire smoke building'\n"
+        "  - CARTOON examples: 'cartoon fish river', 'animated cooking pot', 'cartoon crowd street'\n"
+        f"  - Current visual style: {visual_style.upper()}\n"
+        + (
+            "  - CARTOON: add 'cartoon' or 'animated' as first word of query."
+            if visual_style == "cartoon"
+            else "  - REALISTIC: use plain descriptive English, no style suffix needed."
+        )
     )
     prompt = (
         SCENE_SYSTEM_PROMPT.replace("VISUAL_STYLE_NOTE", style_note)
@@ -125,8 +136,18 @@ def generate_script_and_scenes(event_description, api_key, visual_style="realist
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.7},
     }
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-    with httpx.Client(timeout=60) as client:
-        resp = client.post(TEXT_ENDPOINT, headers=headers, json=payload)
+    resp = None
+    for attempt in range(5):
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(TEXT_ENDPOINT, headers=headers, json=payload)
+        if resp.status_code == 200:
+            break
+        if resp.status_code in (503, 429, 500):
+            wait = 10 * (attempt + 1)
+            print(f"[script] {resp.status_code} — {wait}s retry ({attempt+1}/5)...", flush=True)
+            time.sleep(wait)
+        else:
+            break
     if resp.status_code != 200:
         raise RuntimeError(f"script generation failed ({resp.status_code}): {resp.text[:500]}")
     data = resp.json()
@@ -154,8 +175,18 @@ def synthesize_full_audio_gemini(scenes, api_key, voice, out_wav_path):
         },
     }
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-    with httpx.Client(timeout=120) as client:
-        resp = client.post(TTS_ENDPOINT, headers=headers, json=payload)
+    resp = None
+    for attempt in range(4):
+        with httpx.Client(timeout=120) as client:
+            resp = client.post(TTS_ENDPOINT, headers=headers, json=payload)
+        if resp.status_code == 200:
+            break
+        if resp.status_code in (503, 429, 500):
+            wait = 15 * (attempt + 1)
+            print(f"[tts] {resp.status_code} — {wait}s retry ({attempt+1}/4)...", flush=True)
+            time.sleep(wait)
+        else:
+            break
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini TTS failed ({resp.status_code}): {resp.text[:500]}")
     data = resp.json()
@@ -391,7 +422,24 @@ def _pexels_image_search_one(query, api_key, orientation):
         return None
 
 
+def _clean_pexels_query(query):
+    """Pexels-এ cartoon/animated/illustration word কাজ করে না — strip করো।
+    বাংলা character থাকলে সেটাও সরাও।"""
+    stop_words = {"cartoon", "animated", "animation", "illustration", "illustrated"}
+    words = query.lower().split()
+    cleaned = " ".join(w for w in words if w not in stop_words)
+    # বাংলা unicode range: \u0980-\u09FF
+    import unicodedata
+    cleaned = " ".join(
+        w for w in cleaned.split()
+        if not any("\u0980" <= c <= "\u09FF" for c in w)
+    )
+    return cleaned.strip() or query  # সব বাদ গেলে original রাখো
+
+
 def fetch_pexels_media(query, pexels_key, w=720, h=1280, slot=0):
+    # cartoon/animation keyword Pexels-এ কাজ করে না — clean করো
+    query = _clean_pexels_query(query)
     orientation = "portrait" if h > w else "landscape"
     queries = _build_fallback_queries(query)
     page = (slot % 3) + 1
@@ -544,8 +592,6 @@ def get_scene_media(job, scene, scene_idx, media_dir,
     def try_stock():
         r = try_pexels()
         if r: return r
-        r = try_pixabay()
-        if r: return r
         return try_unsplash()
 
     def try_ai():
@@ -625,20 +671,22 @@ def _build_video_clip(video_path, audio_path, audio_dur, out_path, w, h):
         start_t = _find_best_segment(video_path, video_dur, audio_dur)
         cmd = ["ffmpeg", "-y",
                "-ss", str(start_t), "-i", video_path, "-i", audio_path,
-               "-t", str(audio_dur), "-vf", sf,
+               "-vf", sf,
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                "-pix_fmt", "yuv420p", "-threads", "1",
                "-map", "0:v:0", "-map", "1:a:0",
-               "-c:a", "aac", "-b:a", "96k", out_path]
+               "-c:a", "aac", "-b:a", "96k",
+               "-shortest", out_path]   # -shortest: audio শেষ হলেই clip শেষ
     else:
         loop_count = int(audio_dur / video_dur) + 2
         cmd = ["ffmpeg", "-y",
                "-stream_loop", str(loop_count), "-i", video_path, "-i", audio_path,
-               "-t", str(audio_dur), "-vf", sf,
+               "-vf", sf,
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                "-pix_fmt", "yuv420p", "-threads", "1",
                "-map", "0:v:0", "-map", "1:a:0",
-               "-c:a", "aac", "-b:a", "96k", out_path]
+               "-c:a", "aac", "-b:a", "96k",
+               "-shortest", out_path]   # -shortest: audio শেষ হলেই clip শেষ
 
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode != 0:
@@ -868,7 +916,9 @@ def _run_scenevideo_job(job_id):
                 subprocess.run([
                     "ffmpeg", "-y", "-i", audio_path,
                     "-ss", str(slot_start), "-t", str(actual_dur),
-                    "-c:a", "aac", "-b:a", "96k", slot_audio_path,
+                    "-c:a", "aac", "-b:a", "96k",
+                    "-avoid_negative_ts", "make_zero",
+                    slot_audio_path,
                 ], capture_output=True)
 
                 media_type = media.get("type", "image")
@@ -907,9 +957,13 @@ def _run_scenevideo_job(job_id):
                 ], capture_output=True, check=True)
                 os.remove(slot_list)
 
+            # actual duration measure করো (estimated audio_dur নয়) — xfade offset accurate হবে
+            actual_clip_dur = _ffprobe_duration(scene_clip_path)
+            if actual_clip_dur <= 0:
+                actual_clip_dur = audio_dur  # fallback
             clip_paths.append(scene_clip_path)
-            clip_durations.append(audio_dur)
-            job_log(job, f"   ✅ Scene {i+1}/{len(scenes)} তৈরি ({n_slots} slot)")
+            clip_durations.append(actual_clip_dur)
+            job_log(job, f"   ✅ Scene {i+1}/{len(scenes)} তৈরি ({n_slots} slot, {actual_clip_dur:.2f}s)")
 
         if not clip_paths:
             raise RuntimeError("কোনো clip তৈরি হয়নি")
