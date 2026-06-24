@@ -90,12 +90,21 @@ SCENE_SYSTEM_PROMPT = """তুমি একজন বাংলা নিউজ 
 1. ঘটনাটাকে ৪-৮টা scene-এ ভাগ করো (কালানুক্রমিকভাবে)।
 2. প্রতিটা scene-এ:
    - narration: বাংলা ১-২ বাক্য (সাংবাদিকতার ভাষায়, নিরপেক্ষ)
-   - stock_query: ইংরেজি ২-৪ word, Pexels/Pixabay-তে search করার জন্য।
+   - search_queries: Pexels stock footage search-এর জন্য ৩টা English query — hierarchy অনুযায়ী:
+       q1 (specific):  ২-৩ word, NOUN first, scene-এর exact visual subject
+       q2 (broader):   ২ word, broader concept
+       q3 (generic):   ১-২ word, সবসময় Pexels-এ পাওয়া যাবে এমন generic visual
      VISUAL_STYLE_NOTE
-     নিয়ম: simple noun+adjective, কোনো বাংলা শব্দ না, কোনো proper noun না
-   - ai_prompt: ইংরেজিতে Pollinations-এর জন্য detailed visual description।
-     সবসময় "illustrated editorial news-style digital painting" style।
-     graphic violence/gore/blood/realistic face দেওয়া যাবে না।
+     CRITICAL RULES:
+       - সম্পূর্ণ English — কোনো বাংলা শব্দ নিষিদ্ধ
+       - Noun দিয়ে শুরু করো (adjective দিয়ে না)
+       - কোনো proper noun, country name, brand name নয়
+       - q1 example: "fish floating river", "man bathing water", "pigeon street"
+       - q2 example: "river water", "bird ground", "kitchen cooking"  
+       - q3 example: "nature water", "city street", "food cooking"
+   - ai_prompt: Pollinations-এর জন্য detailed English visual description।
+     Style: "illustrated editorial news-style digital painting"
+     No violence/gore/blood/realistic face।
 
 JSON ফরম্যাট (শুধু JSON, অন্য কিছু না):
 {
@@ -103,7 +112,7 @@ JSON ফরম্যাট (শুধু JSON, অন্য কিছু না)
   "scenes": [
     {
       "narration": "বাংলা বাক্য",
-      "stock_query": "english keywords",
+      "search_queries": {"q1": "specific query", "q2": "broader query", "q3": "generic query"},
       "ai_prompt": "English AI image description"
     }
   ]
@@ -111,22 +120,24 @@ JSON ফরম্যাট (শুধু JSON, অন্য কিছু না)
 """
 
 def generate_script_and_scenes(event_description, api_key, visual_style="realistic"):
-    # উভয় mode-এই stock_query rules same — শুধু English, কোনো বাংলা নয়
-    style_note = (
-        "stock_query STRICT RULES (both modes):\n"
-        "  - ENGLISH ONLY. Bengali script (অ আ ক খ etc) সম্পূর্ণ নিষিদ্ধ।\n"
-        "  - 2-4 simple English words. Generic visual concept।\n"
-        "  - NO proper nouns, NO country names, NO city names, NO brand names।\n"
-        "  - Think: what would a stock videographer film? Use that concept।\n"
-        "  - REALISTIC examples: 'river fishing boat', 'busy street crowd', 'doctor patient hospital', 'fire smoke building'\n"
-        "  - CARTOON examples: 'cartoon fish river', 'animated cooking pot', 'cartoon crowd street'\n"
-        f"  - Current visual style: {visual_style.upper()}\n"
-        + (
-            "  - CARTOON: add 'cartoon' or 'animated' as first word of query."
-            if visual_style == "cartoon"
-            else "  - REALISTIC: use plain descriptive English, no style suffix needed."
+    if visual_style == "cartoon":
+        style_note = (
+            "CARTOON mode — search_queries rules:\n"
+            "  q1/q2/q3 সব English only, noun first।\n"
+            "  q1 example: 'fish river cartoon', 'cooking pot animated'\n"
+            "  q2 example: 'fish water', 'cooking food'\n"
+            "  q3 example: 'nature', 'kitchen'\n"
+            "  Note: cartoon/animated word যোগ করা optional, noun আগে।"
         )
-    )
+    else:
+        style_note = (
+            "REALISTIC mode — search_queries rules:\n"
+            "  q1/q2/q3 সব English only, noun first, literal descriptive।\n"
+            "  q1 example: 'fish floating river', 'man bathing water', 'pigeon street ground'\n"
+            "  q2 example: 'river water', 'bird ground', 'street crowd'\n"
+            "  q3 example: 'nature water', 'city', 'outdoor'\n"
+            "  No adjective-first queries like 'dead fish' or 'empty packet'।"
+        )
     prompt = (
         SCENE_SYSTEM_PROMPT.replace("VISUAL_STYLE_NOTE", style_note)
         + f"\n\nঘটনার বিবরণ:\n{event_description}"
@@ -437,27 +448,52 @@ def _clean_pexels_query(query):
     return cleaned.strip() or query  # সব বাদ গেলে original রাখো
 
 
-def fetch_pexels_media(query, pexels_key, w=720, h=1280, slot=0):
-    # cartoon/animation keyword Pexels-এ কাজ করে না — clean করো
-    query = _clean_pexels_query(query)
+def fetch_pexels_media(search_queries, pexels_key, w=720, h=1280, slot=0):
+    """
+    search_queries: dict {"q1": specific, "q2": broader, "q3": generic}
+                    অথবা plain string (backward compat)
+    3-level hierarchy দিয়ে search — specific → broader → generic
+    """
     orientation = "portrait" if h > w else "landscape"
-    queries = _build_fallback_queries(query)
-    page = (slot % 3) + 1
+    page = (slot % 2) + 1  # page 1 or 2 rotate
 
-    for q in queries:
+    # search_queries normalize
+    if isinstance(search_queries, str):
+        q = _clean_pexels_query(search_queries)
+        words = q.split()
+        ordered_queries = [
+            q,
+            " ".join(words[:2]) if len(words) >= 2 else q,
+            words[0] if words else q,
+        ]
+    else:
+        ordered_queries = [
+            _clean_pexels_query(search_queries.get("q1", "")),
+            _clean_pexels_query(search_queries.get("q2", "")),
+            _clean_pexels_query(search_queries.get("q3", "")),
+        ]
+        ordered_queries = [q for q in ordered_queries if q]
+
+    # Video search — specific → broader → generic
+    for q in ordered_queries:
+        if not q: continue
         videos = _pexels_video_search_one(q, pexels_key, orientation, page=page)
         if not videos and page > 1:
             videos = _pexels_video_search_one(q, pexels_key, orientation, page=1)
         result = _pick_best_pexels_video(videos, orientation, w, h)
         if result:
-            print(f"[pexels] video: query='{q}' page={page} dur={result['duration']}s", flush=True)
+            print(f"[pexels] ✅ video: q='{q}' dur={result['duration']}s", flush=True)
             return result
+        print(f"[pexels] ❌ miss: q='{q}'", flush=True)
 
-    for q in queries:
+    # Image fallback — same hierarchy
+    for q in ordered_queries:
+        if not q: continue
         result = _pexels_image_search_one(q, pexels_key, orientation)
         if result:
-            print(f"[pexels] image: query='{q}'", flush=True)
+            print(f"[pexels] ✅ image: q='{q}'", flush=True)
             return result
+
     return None
 
 
@@ -544,12 +580,13 @@ def generate_scene_image(prompt, out_path, w=720, h=1280):
 
 def get_scene_media(job, scene, scene_idx, media_dir,
                     mode, pexels_key, pixabay_key, unsplash_key, visual_style, w, h):
-    query = scene.get("stock_query", scene.get("ai_prompt", ""))[:80]
+    # search_queries dict নাও (নতুন format) অথবা stock_query (পুরানো fallback)
+    search_queries = scene.get("search_queries") or scene.get("stock_query", scene.get("ai_prompt", ""))
 
     def try_pexels():
         if not pexels_key: return None
         slot   = scene.get("_slot", 0)
-        result = fetch_pexels_media(query, pexels_key, w, h, slot=slot)
+        result = fetch_pexels_media(search_queries, pexels_key, w, h, slot=slot)
         if not result: return None
         ext      = ".mp4" if result["kind"] == "video" else ".jpg"
         out_path = os.path.join(media_dir, f"scene_{scene_idx:02d}_pexels{ext}")
@@ -659,38 +696,82 @@ def _build_image_clip(image_path, audio_path, duration_sec, out_path, zoom_in, w
     return out_path
 
 
-def _build_video_clip(video_path, audio_path, audio_dur, out_path, w, h):
-    """Stock video → audio duration-এ fit। short video → stream_loop।"""
+def _prepare_video_segment(video_path, duration, out_path, w, h):
+    """
+    MoneyPrinterTurbo approach: video track ONLY (no audio) — exact duration।
+    audio পরে আলাদাভাবে overlay হবে।
+    """
     video_dur = _ffprobe_duration(video_path)
     if video_dur <= 0:
         raise RuntimeError(f"video duration পড়তে পারেনি: {video_path}")
 
     sf = _scale_filter(w, h)
 
-    if video_dur >= audio_dur:
-        start_t = _find_best_segment(video_path, video_dur, audio_dur)
+    if video_dur >= duration:
+        # যথেষ্ট লম্বা → ১/৩ position থেকে শুরু করো
+        start_t = max(0.0, (video_dur - duration) / 3)
         cmd = ["ffmpeg", "-y",
-               "-ss", str(start_t), "-i", video_path, "-i", audio_path,
+               "-ss", str(start_t), "-t", str(duration),
+               "-i", video_path,
                "-vf", sf,
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-               "-pix_fmt", "yuv420p", "-threads", "1",
-               "-map", "0:v:0", "-map", "1:a:0",
-               "-c:a", "aac", "-b:a", "96k",
-               "-shortest", out_path]   # -shortest: audio শেষ হলেই clip শেষ
+               "-pix_fmt", "yuv420p", "-r", "30", "-threads", "1",
+               "-an", out_path]  # audio strip — MoneyPrinterTurbo approach
     else:
-        loop_count = int(audio_dur / video_dur) + 2
+        # ছোট video → loop করো
+        loop_count = int(duration / video_dur) + 2
         cmd = ["ffmpeg", "-y",
-               "-stream_loop", str(loop_count), "-i", video_path, "-i", audio_path,
+               "-stream_loop", str(loop_count),
+               "-i", video_path,
+               "-t", str(duration),
                "-vf", sf,
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-               "-pix_fmt", "yuv420p", "-threads", "1",
-               "-map", "0:v:0", "-map", "1:a:0",
-               "-c:a", "aac", "-b:a", "96k",
-               "-shortest", out_path]   # -shortest: audio শেষ হলেই clip শেষ
+               "-pix_fmt", "yuv420p", "-r", "30", "-threads", "1",
+               "-an", out_path]
 
     r = subprocess.run(cmd, capture_output=True)
     if r.returncode != 0:
-        raise RuntimeError(f"video clip failed: {r.stderr[-400:]}")
+        raise RuntimeError(f"video segment failed: {r.stderr[-400:]}")
+    return out_path
+
+
+def _prepare_image_segment(image_path, duration, out_path, zoom_in, w, h):
+    """Image → Ken Burns video segment (no audio)"""
+    scale_w = int(w * 1.1); scale_h = int(h * 1.1)
+    if zoom_in:
+        vf = f"scale={scale_w}:{scale_h},crop={w}:{h}:0:0,setsar=1"
+    else:
+        ox = (scale_w-w)//2; oy = (scale_h-h)//2
+        vf = f"scale={scale_w}:{scale_h},crop={w}:{h}:{ox}:{oy},setsar=1"
+    cmd = [
+        "ffmpeg", "-y", "-loop", "1", "-i", image_path,
+        "-t", str(duration),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-pix_fmt", "yuv420p", "-r", "30", "-threads", "1",
+        "-an", out_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"image segment failed: {r.stderr[-300:]}")
+    return out_path
+
+
+def _build_video_clip(video_path, audio_path, audio_dur, out_path, w, h):
+    """Legacy wrapper — video+audio একসাথে (image clip-এর জন্য)"""
+    tmp_v = out_path + "_v.mp4"
+    _prepare_video_segment(video_path, audio_dur, tmp_v, w, h)
+    # audio mux
+    cmd = ["ffmpeg", "-y",
+           "-i", tmp_v, "-i", audio_path,
+           "-t", str(audio_dur),
+           "-map", "0:v:0", "-map", "1:a:0",
+           "-c:v", "copy", "-c:a", "aac", "-b:a", "96k",
+           out_path]
+    r = subprocess.run(cmd, capture_output=True)
+    if os.path.exists(tmp_v): os.remove(tmp_v)
+    if r.returncode != 0:
+        raise RuntimeError(f"video clip mux failed: {r.stderr[-300:]}")
     return out_path
 
 
@@ -735,58 +816,101 @@ def _make_black_frame(out_path, w, h):
 
 # ───────────────────────── 8. Concat with transitions ───────────────────
 
-def concat_with_transitions(clip_paths, scene_durations, transition_style, out_path):
+def _normalize_clip(clip_path, out_path, w, h):
+    """
+    OpenMontage approach: concat আগে সব clip normalize করো।
+    Same resolution + fps + codec → freeze/sync problem নেই।
+    """
+    cmd = [
+        "ffmpeg", "-y", "-i", clip_path,
+        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+        "-r", "30",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+        out_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True)
+    return r.returncode == 0
+
+
+def concat_with_transitions(clip_paths, scene_durations, transition_style, out_path, w=720, h=1280):
     if len(clip_paths) == 1:
         shutil.copy(clip_paths[0], out_path); return out_path
 
-    if transition_style == "none":
-        list_path = out_path + "_list.txt"
-        with open(list_path, "w") as f:
-            for p in clip_paths: f.write(f"file '{p}'\n")
-        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-               "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-               "-pix_fmt", "yuv420p", "-threads", "1",
-               "-c:a", "aac", "-b:a", "96k", out_path]
-        try:
+    tmp_dir = out_path + "_norm_tmp"
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    # Step 1: সব clip normalize করো — OpenMontage এটাই করে
+    norm_clips = []
+    for i, cp in enumerate(clip_paths):
+        norm_path = os.path.join(tmp_dir, f"norm_{i:03d}.mp4")
+        ok = _normalize_clip(cp, norm_path, w, h)
+        norm_clips.append(norm_path if ok else cp)
+
+    try:
+        if transition_style == "none":
+            # Simple concat demuxer — clips already normalized
+            list_path = os.path.join(tmp_dir, "concat.txt")
+            with open(list_path, "w") as f:
+                for p in norm_clips: f.write(f"file '{os.path.abspath(p)}'\n")
+            cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+                   "-c", "copy", out_path]
             subprocess.run(cmd, capture_output=True, check=True)
-        finally:
-            if os.path.exists(list_path): os.remove(list_path)
+            return out_path
+
+        # xfade + acrossfade — OpenMontage _chain_xfade approach
+        # offset formula: cumulative_offset = prev_offset + clip_dur - transition_dur
+        td = TRANSITION_DUR
+        xfade_name = "fade" if transition_style == "fade" else "slideleft"
+        n = len(norm_clips)
+
+        inputs = []
+        for p in norm_clips: inputs += ["-i", p]
+
+        video_filters = []
+        audio_filters = []
+        cumulative_offset = 0.0
+
+        for i in range(n - 1):
+            clip_dur = _ffprobe_duration(norm_clips[i])
+            offset = round(cumulative_offset + clip_dur - td, 3)
+            offset = max(0.0, offset)
+
+            v_in1 = "[0:v]" if i == 0 else f"[vfade{i-1}]"
+            a_in1 = "[0:a]" if i == 0 else f"[afade{i-1}]"
+            v_in2 = f"[{i+1}:v]"
+            a_in2 = f"[{i+1}:a]"
+
+            v_out = f"[vfade{i}]" if i < n-2 else "[vout]"
+            a_out = f"[afade{i}]" if i < n-2 else "[aout]"
+
+            video_filters.append(
+                f"{v_in1}{v_in2}xfade=transition={xfade_name}:duration={td}:offset={offset}{v_out}"
+            )
+            # OpenMontage: acrossfade audio-র জন্য — xfade নয়
+            audio_filters.append(
+                f"{a_in1}{a_in2}acrossfade=d={td}{a_out}"
+            )
+            cumulative_offset = offset
+
+        filter_complex = ";".join(video_filters + audio_filters)
+        cmd = (["ffmpeg", "-y"] + inputs +
+               ["-filter_complex", filter_complex,
+                "-map", "[vout]", "-map", "[aout]",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                "-pix_fmt", "yuv420p", "-threads", "1",
+                "-c:a", "aac", "-b:a", "128k",
+                out_path])
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode != 0:
+            print(f"[xfade] failed: {r.stderr[-300:]}", flush=True)
+            # fallback: none transition
+            return concat_with_transitions(clip_paths, scene_durations, "none", out_path, w, h)
         return out_path
 
-    td = TRANSITION_DUR
-    xfade_name = "fade" if transition_style == "fade" else "slideleft"
-    inputs = []
-    for p in clip_paths: inputs += ["-i", p]
-
-    filter_parts = []
-    cumulative = 0.0
-    last_v = "0:v"
-    last_a_inputs = "[0:a]"
-
-    for i in range(1, len(clip_paths)):
-        cumulative += scene_durations[i-1]
-        offset = max(0.0, cumulative - td * i)
-        out_v  = f"vt{i}"
-        filter_parts.append(
-            f"[{last_v}][{i}:v]xfade=transition={xfade_name}:duration={td}:offset={offset:.3f}[{out_v}]"
-        )
-        last_v = out_v
-        last_a_inputs += f"[{i}:a]"
-
-    filter_parts.append(f"{last_a_inputs}concat=n={len(clip_paths)}:v=0:a=1[outa]")
-    filter_complex = ";".join(filter_parts)
-
-    cmd = (["ffmpeg", "-y"] + inputs +
-           ["-filter_complex", filter_complex,
-            "-map", f"[{last_v}]", "-map", "[outa]",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-            "-pix_fmt", "yuv420p", "-threads", "1",
-            "-c:a", "aac", "-b:a", "96k", out_path])
-    r = subprocess.run(cmd, capture_output=True)
-    if r.returncode != 0:
-        print(f"[scenevideo] xfade failed, fallback concat: {r.stderr[-200:]}", flush=True)
-        return concat_with_transitions(clip_paths, scene_durations, "none", out_path)
-    return out_path
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ───────────────────────── 9. Background Music ──────────────────────────
@@ -925,37 +1049,59 @@ def _run_scenevideo_job(job_id):
                 media_path = media.get("path")
 
                 try:
+                    # MoneyPrinterTurbo approach: video segment আলাদা বানাও (no audio)
+                    # audio পরে concat-এর পরে overlay হবে
+                    vid_only_path = slot_clip_path + "_v.mp4"
                     if media_type == "video" and media_path and os.path.exists(media_path):
                         job_log(job, f"   🎬 Clip {i+1} slot {s+1}: video ({actual_dur:.1f}s)")
-                        _build_video_clip(media_path, slot_audio_path, actual_dur, slot_clip_path, w, h)
+                        _prepare_video_segment(media_path, actual_dur, vid_only_path, w, h)
                     else:
                         if not media_path or not os.path.exists(media_path or ""):
                             job_log(job, f"   ⚠️  Clip {i+1} slot {s+1}: media নেই, black frame", "warn")
                             media_path = os.path.join(media_dir, f"black_{i}_{s}.png")
                             _make_black_frame(media_path, w, h)
                         job_log(job, f"   🖼️  Clip {i+1} slot {s+1}: image ({actual_dur:.1f}s)")
-                        _build_image_clip(media_path, slot_audio_path, actual_dur,
-                                          slot_clip_path, s % 2 == 0, w, h)
-                    slot_clips.append((slot_clip_path, actual_dur))
+                        _prepare_image_segment(media_path, actual_dur, vid_only_path, s % 2 == 0, w, h)
+                    slot_clips.append((vid_only_path, actual_dur))
                 except Exception as e:
                     job_log(job, f"   ❌ Clip {i+1} slot {s+1} ব্যর্থ: {e}", "error")
 
             if not slot_clips: continue
 
             scene_clip_path = os.path.join(clip_dir, f"clip_{i:02d}.mp4")
+            # Step 1: video-only segments concat করো
+            vid_only_scene = scene_clip_path + "_vonly.mp4"
             if len(slot_clips) == 1:
-                shutil.copy(slot_clips[0][0], scene_clip_path)
+                shutil.copy(slot_clips[0][0], vid_only_scene)
             else:
                 slot_list = scene_clip_path + "_slots.txt"
                 with open(slot_list, "w") as f:
                     for sp, _ in slot_clips: f.write(f"file '{sp}'\n")
-                subprocess.run([
+                r = subprocess.run([
                     "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", slot_list,
                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-                    "-pix_fmt", "yuv420p", "-threads", "1",
-                    "-c:a", "aac", "-b:a", "96k", scene_clip_path,
-                ], capture_output=True, check=True)
-                os.remove(slot_list)
+                    "-pix_fmt", "yuv420p", "-r", "30", "-threads", "1",
+                    "-an", vid_only_scene,
+                ], capture_output=True)
+                if os.path.exists(slot_list): os.remove(slot_list)
+                if r.returncode != 0:
+                    raise RuntimeError(f"slot concat failed: {r.stderr[-200:]}")
+
+            # Step 2: audio overlay — video duration = audio duration হওয়া guaranteed
+            # কারণ প্রতিটা segment exact duration দিয়ে বানানো হয়েছে
+            r2 = subprocess.run([
+                "ffmpeg", "-y",
+                "-i", vid_only_scene,
+                "-i", audio_path,
+                "-t", str(audio_dur),
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy",  # video re-encode করা লাগবে না
+                "-c:a", "aac", "-b:a", "96k",
+                scene_clip_path,
+            ], capture_output=True)
+            if os.path.exists(vid_only_scene): os.remove(vid_only_scene)
+            if r2.returncode != 0:
+                raise RuntimeError(f"audio overlay failed: {r2.stderr[-200:]}")
 
             # actual duration measure করো (estimated audio_dur নয়) — xfade offset accurate হবে
             actual_clip_dur = _ffprobe_duration(scene_clip_path)
@@ -972,7 +1118,7 @@ def _run_scenevideo_job(job_id):
         job["stage"] = "compose"
         job_log(job, f"🔗 Concat — transition: {transition}")
         composed_path = os.path.join(job_dir, "composed_video.mp4")
-        concat_with_transitions(clip_paths, clip_durations, transition, composed_path)
+        concat_with_transitions(clip_paths, clip_durations, transition, composed_path, w, h)
 
         # 7) Background music
         final_path = os.path.join(job_dir, "final_video.mp4")
